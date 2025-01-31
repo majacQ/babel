@@ -10,10 +10,14 @@ if (major < 12 || (major === 12 && minor < 3)) {
   );
 }
 
-const hook = require("./hook");
-const { WorkerClient } = require("./worker-client");
+const hook = require("./hook.js");
+const { WorkerClient } = require("./worker-client.js");
 
-const register = hook.register.bind(null, new WorkerClient());
+let client;
+function register(opts) {
+  client ||= new WorkerClient();
+  return hook.register(client, opts);
+}
 
 module.exports = Object.assign(register, {
   revert: hook.revert,
@@ -21,6 +25,6 @@ module.exports = Object.assign(register, {
   __esModule: true,
 });
 
-if (!require("./is-in-register-worker").isInRegisterWorker) {
+if (!require("./is-in-register-worker.js").isInRegisterWorker) {
   register();
 }

@@ -16,15 +16,28 @@
 
 import { declare } from "@babel/helper-plugin-utils";
 import syntaxRecordAndTuple from "@babel/plugin-syntax-record-and-tuple";
-import { types as t } from "@babel/core";
+import type { Options as SyntaxOptions } from "@babel/plugin-syntax-record-and-tuple";
+import { types as t, type NodePath } from "@babel/core";
 import { addNamed, isModule } from "@babel/helper-module-imports";
 import { OptionValidator } from "@babel/helper-validator-option";
 
-declare const PACKAGE_JSON: { name: string; version: string };
 const v = new OptionValidator(PACKAGE_JSON.name);
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options extends SyntaxOptions {
+  polyfillModuleName?: string;
+  importPolyfill?: boolean;
+}
+
+type State = {
+  programPath: NodePath<t.Program>;
+};
+
+// program -> cacheKey -> localBindingName
+type Cache = Map<string, string>;
+type ImportCache = WeakMap<t.Program, Cache>;
+
+export default declare<State>((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const polyfillModuleName = v.validateStringOption(
     "polyfillModuleName",
@@ -37,16 +50,28 @@ export default declare((api, options) => {
     !!options.polyfillModuleName,
   );
 
-  // program -> cacheKey -> localBindingName
-  const importCaches = new WeakMap();
+  const importCaches: ImportCache = new WeakMap();
 
-  function getOr(map, key, getDefault) {
+  function getOr<K, V>(map: Map<K, V>, key: K, getDefault: () => V): V;
+  function getOr<K extends object, V>(
+    map: WeakMap<K, V>,
+    key: K,
+    getDefault: () => V,
+  ): V;
+  function getOr<K extends object, V>(
+    map: WeakMap<K, V>,
+    key: K,
+    getDefault: () => V,
+  ) {
     let value = map.get(key);
     if (!value) map.set(key, (value = getDefault()));
     return value;
   }
 
-  function getBuiltIn(name, path, programPath) {
+  function getBuiltIn(
+    name: "Record" | "Tuple",
+    programPath: NodePath<t.Program>,
+  ) {
     if (!shouldImportPolyfill) return t.identifier(name);
     if (!programPath) {
       throw new Error("Internal error: unable to find the Program node.");
@@ -54,7 +79,11 @@ export default declare((api, options) => {
 
     const cacheKey = `${name}:${isModule(programPath)}`;
 
-    const cache = getOr(importCaches, programPath.node, () => new Map());
+    const cache = getOr(
+      importCaches,
+      programPath.node,
+      () => new Map<string, string>(),
+    );
     const localBindingName = getOr(cache, cacheKey, () => {
       return addNamed(programPath, name, polyfillModuleName, {
         importedInterop: "uncompiled",
@@ -72,14 +101,14 @@ export default declare((api, options) => {
         state.programPath = path;
       },
       RecordExpression(path, state) {
-        const record = getBuiltIn("Record", path, state.programPath);
+        const record = getBuiltIn("Record", state.programPath);
 
         const object = t.objectExpression(path.node.properties);
         const wrapped = t.callExpression(record, [object]);
         path.replaceWith(wrapped);
       },
       TupleExpression(path, state) {
-        const tuple = getBuiltIn("Tuple", path, state.programPath);
+        const tuple = getBuiltIn("Tuple", state.programPath);
 
         const wrapped = t.callExpression(tuple, path.node.elements);
         path.replaceWith(wrapped);

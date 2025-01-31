@@ -1,6 +1,9 @@
 {
   "type": "File",
   "start":0,"end":49,"loc":{"start":{"line":1,"column":0,"index":0},"end":{"line":2,"column":41,"index":49}},
+  "errors": [
+    "SyntaxError: Missing initializer in destructuring declaration. (2:40)"
+  ],
   "program": {
     "type": "Program",
     "start":0,"end":49,"loc":{"start":{"line":1,"column":0,"index":0},"end":{"line":2,"column":41,"index":49}},
@@ -42,9 +45,6 @@
                     "type": "Identifier",
                     "start":16,"end":17,"loc":{"start":{"line":2,"column":8,"index":16},"end":{"line":2,"column":9,"index":17},"identifierName":"x"},
                     "name": "x"
-                  },
-                  "extra": {
-                    "shorthand": true
                   }
                 },
                 {
@@ -62,9 +62,6 @@
                     "type": "Identifier",
                     "start":19,"end":20,"loc":{"start":{"line":2,"column":11,"index":19},"end":{"line":2,"column":12,"index":20},"identifierName":"y"},
                     "name": "y"
-                  },
-                  "extra": {
-                    "shorthand": true
                   }
                 }
               ],
@@ -121,6 +118,9 @@
         "kind": "const"
       }
     ],
-    "directives": []
+    "directives": [],
+    "extra": {
+      "topLevelAwait": false
+    }
   }
 }

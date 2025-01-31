@@ -1,20 +1,22 @@
 import { declare } from "@babel/helper-plugin-utils";
-import syntaxFunctionSent from "@babel/plugin-syntax-function-sent";
 import wrapFunction from "@babel/helper-wrap-function";
-import { types as t } from "@babel/core";
+import { types as t, type Visitor } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
-  const isFunctionSent = node =>
+  const isFunctionSent = (node: t.MetaProperty) =>
     t.isIdentifier(node.meta, { name: "function" }) &&
     t.isIdentifier(node.property, { name: "sent" });
 
-  const hasBeenReplaced = (node, sentId) =>
+  const hasBeenReplaced = (
+    node: t.Node,
+    sentId: string,
+  ): node is t.AssignmentExpression =>
     t.isAssignmentExpression(node) &&
     t.isIdentifier(node.left, { name: sentId });
 
-  const yieldVisitor = {
+  const yieldVisitor: Visitor<{ sentId: string }> = {
     Function(path) {
       path.skip();
     },
@@ -36,7 +38,7 @@ export default declare(api => {
 
   return {
     name: "proposal-function-sent",
-    inherits: syntaxFunctionSent,
+    manipulateOptions: (_, parser) => parser.plugins.push("functionSent"),
 
     visitor: {
       MetaProperty(path, state) {
@@ -51,6 +53,7 @@ export default declare(api => {
         const sentId = path.scope.generateUid("function.sent");
 
         fnPath.traverse(yieldVisitor, { sentId });
+        // @ts-expect-error A generator must not be an arrow function
         fnPath.node.body.body.unshift(
           t.variableDeclaration("let", [
             t.variableDeclarator(t.identifier(sentId), t.yieldExpression()),

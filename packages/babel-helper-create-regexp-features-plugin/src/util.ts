@@ -1,34 +1,39 @@
 import type { types as t } from "@babel/core";
-import { FEATURES, hasFeature } from "./features";
+import { FEATURES, hasFeature } from "./features.ts";
 
-type RegexpuOptions = {
-  unicodeFlag: "transform" | false;
-  unicodeSetsFlag: "transform" | "parse" | false;
-  dotAllFlag: "transform" | false;
-  unicodePropertyEscapes: "transform" | false;
-  namedGroups: "transform" | false;
-  onNamedGroup: (name: string, index: number) => void;
-};
+import type { RegexpuOptions } from "regexpu-core";
 
-export function generateRegexpuOptions(toTransform: number): RegexpuOptions {
-  type Experimental = 1;
+export function generateRegexpuOptions(
+  pattern: string,
+  toTransform: number,
+): RegexpuOptions {
+  const feat = (name: keyof typeof FEATURES) => {
+    return hasFeature(toTransform, FEATURES[name]) ? "transform" : false;
+  };
 
-  const feat = <Stability extends 0 | 1 = 0>(
-    name: keyof typeof FEATURES,
-    ok: "transform" | (Stability extends 0 ? never : "parse") = "transform",
-  ) => {
-    return hasFeature(toTransform, FEATURES[name]) ? ok : false;
+  const featDuplicateNamedGroups = (): "transform" | false => {
+    if (!feat("duplicateNamedCaptureGroups")) return false;
+
+    // This can return false positive, for example for /\(?<a>\)/.
+    // However, it's such a rare occurrence that it's ok to compile
+    // the regexp even if we only need to compile regexps with
+    // duplicate named capturing groups.
+    const regex = /\(\?<([^>]+)>/g;
+    const seen = new Set();
+    for (let match; (match = regex.exec(pattern)); seen.add(match[1])) {
+      if (seen.has(match[1])) return "transform";
+    }
+    return false;
   };
 
   return {
     unicodeFlag: feat("unicodeFlag"),
-    unicodeSetsFlag:
-      feat<Experimental>("unicodeSetsFlag") ||
-      feat<Experimental>("unicodeSetsFlag_syntax", "parse"),
+    unicodeSetsFlag: feat("unicodeSetsFlag"),
     dotAllFlag: feat("dotAllFlag"),
     unicodePropertyEscapes: feat("unicodePropertyEscape"),
-    namedGroups: feat("namedCaptureGroups"),
+    namedGroups: feat("namedCaptureGroups") || featDuplicateNamedGroups(),
     onNamedGroup: () => {},
+    modifiers: feat("modifiers"),
   };
 }
 
@@ -46,7 +51,7 @@ export function canSkipRegexpu(
     if (options.unicodeFlag === "transform") return false;
     if (
       options.unicodePropertyEscapes === "transform" &&
-      /\\[pP]{/.test(pattern)
+      /\\p\{/i.test(pattern)
     ) {
       return false;
     }
@@ -57,6 +62,10 @@ export function canSkipRegexpu(
   }
 
   if (options.namedGroups === "transform" && /\(\?<(?![=!])/.test(pattern)) {
+    return false;
+  }
+
+  if (options.modifiers === "transform" && /\(\?[\w-]+:/.test(pattern)) {
     return false;
   }
 

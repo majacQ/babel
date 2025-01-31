@@ -2,6 +2,32 @@ import verifyAndAssertMessages from "../../helpers/verifyAndAssertMessages.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
+function verifyDecoratorsLegacyAndAssertMessages(
+  code,
+  rules,
+  expectedMessages,
+  sourceType,
+) {
+  const overrideConfig = {
+    parserOptions: {
+      sourceType,
+      babelOptions: {
+        configFile: path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "../../../../babel-eslint-shared-fixtures/config/babel.config.decorators-legacy.js",
+        ),
+      },
+    },
+  };
+  return verifyAndAssertMessages(
+    code,
+    rules,
+    expectedMessages,
+    sourceType,
+    overrideConfig,
+  );
+}
+
 describe("verify", () => {
   it("arrow function support (issue #1)", () => {
     verifyAndAssertMessages("describe('stuff', () => {});");
@@ -1073,32 +1099,6 @@ describe("verify", () => {
   });
 
   describe("decorators #72 (legacy)", () => {
-    function verifyDecoratorsLegacyAndAssertMessages(
-      code,
-      rules,
-      expectedMessages,
-      sourceType,
-    ) {
-      const overrideConfig = {
-        parserOptions: {
-          sourceType,
-          babelOptions: {
-            configFile: path.resolve(
-              path.dirname(fileURLToPath(import.meta.url)),
-              "../../../../babel-eslint-shared-fixtures/config/babel.config.decorators-legacy.js",
-            ),
-          },
-        },
-      };
-      return verifyAndAssertMessages(
-        code,
-        rules,
-        expectedMessages,
-        sourceType,
-        overrideConfig,
-      );
-    }
-
     it("class declaration", () => {
       verifyDecoratorsLegacyAndAssertMessages(
         `
@@ -1247,6 +1247,47 @@ describe("verify", () => {
     });
   });
 
+  describe("decorators #15085 (legacy)", () => {
+    it("works with keyword-spacing rule", () => {
+      verifyDecoratorsLegacyAndAssertMessages(
+        "@dec export class C {}; @dec export default class {}",
+        { "keyword-spacing": 1 },
+        [],
+      );
+    });
+  });
+
+  describe("decorators #16239", () => {
+    it("field decorators count as usage for no-unused-vars", () => {
+      verifyAndAssertMessages(
+        `
+          import { tracked } from '@glimmer/tracking';
+
+          class State {
+            @tracked depth = 0;
+          }
+
+          new State();
+        `,
+        { "no-unused-vars": 1 },
+      );
+    });
+    it("method decorators count as usage for no-unused-vars", () => {
+      verifyAndAssertMessages(
+        `
+          import { tracked } from '@glimmer/tracking';
+
+          class State {
+            @tracked depth() { return 0; }
+          }
+
+          new State();
+        `,
+        { "no-unused-vars": 1 },
+      );
+    });
+  });
+
   it("detects minimal no-unused-vars case #120", () => {
     verifyAndAssertMessages("var unused;", { "no-unused-vars": 1 }, [
       "1:5 'unused' is defined but never used. no-unused-vars",
@@ -1272,14 +1313,14 @@ describe("verify", () => {
     );
   });
 
-  it("does not mark spread variables false-positive", () => {
+  it("does not mark spread variables false-positive: multiple destructuring bindings", () => {
     verifyAndAssertMessages(
       "var originalObject = {}; var {field1, field2, ...clone} = originalObject;",
       { "no-undef": 1, "no-redeclare": 1 },
     );
   });
 
-  it("does not mark spread variables false-positive", () => {
+  it("does not mark spread variables false-positive: single destructuring binding", () => {
     verifyAndAssertMessages(
       "const props = { yo: 'yo' }; const { ...otherProps } = props;",
       { "no-undef": 1, "no-redeclare": 1 },
@@ -1497,7 +1538,7 @@ describe("verify", () => {
       ],
       "script",
       {
-        env: {},
+        globals: {},
         parserOptions: {
           ecmaVersion: 6,
           sourceType: "script",
@@ -1514,7 +1555,7 @@ describe("verify", () => {
       [],
       "script",
       {
-        env: {},
+        globals: {},
         parserOptions: {
           ecmaVersion: 6,
           sourceType: "script",
@@ -1648,7 +1689,7 @@ describe("verify", () => {
         return hasGlobal;
         }
       `,
-      { "newline-before-return": 1 },
+      { "newline-before-return": 1, "no-console": 1 },
     );
   });
 
@@ -1739,6 +1780,17 @@ describe("verify", () => {
           { "no-unused-vars": 1 },
         );
       });
+
+      it("no-use-before-define allows referencing the class in a field", () => {
+        verifyAndAssertMessages(
+          `
+            class C {
+              d = C.name;
+            }
+          `,
+          { "no-use-before-define": 1 },
+        );
+      });
     });
 
     describe("private field declarations", () => {
@@ -1764,12 +1816,58 @@ describe("verify", () => {
         );
       });
 
+      it("no-use-before-define allows referencing the class in a field", () => {
+        verifyAndAssertMessages(
+          `
+            class C {
+              #d = C.name;
+            }
+          `,
+          { "no-use-before-define": 1 },
+        );
+      });
+
       it("type annotations should work", () => {
         verifyAndAssertMessages(
           `class C {
             #p: Array<number>
           }`,
           { "no-undef": 1 },
+        );
+      });
+    });
+
+    describe("accessor declarations", () => {
+      it("should not be undefined", () => {
+        verifyAndAssertMessages(
+          `
+              class C {
+                accessor d = 1;
+              }
+          `,
+          { "no-undef": 1 },
+        );
+      });
+
+      it("should not be unused", () => {
+        verifyAndAssertMessages(
+          `
+              export class C {
+                accessor d = 1;
+              }
+          `,
+          { "no-unused-vars": 1 },
+        );
+      });
+
+      it("no-use-before-define allows referencing the class in an accessor", () => {
+        verifyAndAssertMessages(
+          `
+            class C {
+              accessor d = C.name;
+            }
+          `,
+          { "no-use-before-define": 1 },
         );
       });
     });

@@ -1,10 +1,8 @@
 import { declare } from "@babel/helper-plugin-utils";
-import type { PluginPass } from "@babel/core";
-import type { Visitor } from "@babel/traverse";
-import { shouldTransform } from "./util";
+import { shouldTransform } from "./util.ts";
 
 export default declare(api => {
-  api.assertVersion("^7.16.0");
+  api.assertVersion(REQUIRED_VERSION("^7.16.0"));
 
   return {
     name: "plugin-bugfix-safari-id-destructuring-collision-in-function-expression",
@@ -20,6 +18,6 @@ export default declare(api => {
           scope.rename(name, newParamName);
         }
       },
-    } as Visitor<PluginPass>,
+    },
   };
 });

@@ -1,8 +1,12 @@
 import { declare } from "@babel/helper-plugin-utils";
-import { template, types as t } from "@babel/core";
+import { template, types as t, type NodePath } from "@babel/core";
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options {
+  loose?: boolean;
+}
+
+export default declare((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const ignoreToPrimitiveHint =
     api.assumption("ignoreToPrimitiveHint") ?? options.loose;
@@ -27,8 +31,9 @@ export default declare((api, options) => {
    * the second member and convert that one, which reflects the spec behavior
    * of template literals.
    */
-  function buildConcatCallExpressions(items) {
+  function buildConcatCallExpressions(items: t.Expression[]): t.CallExpression {
     let avail = true;
+    // @ts-expect-error items must not be empty
     return items.reduce(function (left, right) {
       let canBeInserted = t.isLiteral(right);
 
@@ -93,14 +98,19 @@ export default declare((api, options) => {
                 ${tmp} = ${this.addHelper(helperName)}(${helperArgs})
               )
             `,
+            // @ts-expect-error Fixme: quasi.expressions may contain TSAnyKeyword
             ...quasi.expressions,
           ]),
         );
       },
 
       TemplateLiteral(path) {
-        const nodes = [];
-        const expressions = path.get("expressions");
+        if (path.parent.type === "TSLiteralType") {
+          // Skip TemplateLiteral in TSLiteralType
+          return;
+        }
+        const nodes: t.Expression[] = [];
+        const expressions = path.get("expressions") as NodePath<t.Expression>[];
 
         let index = 0;
         for (const elem of path.node.quasis) {

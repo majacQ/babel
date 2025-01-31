@@ -1,17 +1,20 @@
 {
-  "mappings": "AAAC;;ACCD,SAASA,GAAT,CAAaC,GAAb,EAAwB;AACpB,QAAM,IAAIC,KAAJ,CAAU,cAAV,CAAN;AACH",
+  "version": 3,
   "names": [
     "foo",
     "bar",
     "Error"
   ],
   "sources": [
-    "test.js",
-    "input.tsx"
+    "input.tsx",
+    "source-maps/input-source-map-multiple-output-sources/input.js",
+    "test.js"
   ],
   "sourcesContent": [
-    "<bar />",
-    "foo(1);\nfunction foo(bar: number): never {\n    throw new Error('Intentional.');\n}"
+    "foo(1);\nfunction foo(bar: number): never {\n    throw new Error('Intentional.');\n}",
+    "foo(1);\nfunction foo(bar) {\n    throw new Error('Intentional.');\n}\n//# sourceMappingURL=input.js.map",
+    "<bar />"
   ],
-  "version": 3
+  "mappings": "AAAA,KAAI;AACJ,SAASA,GAAGA,CAACC,GAAW;EACpB,MAAM,IAAIC,KAAK,CAAC,cAAc,CAAC;AACnC",
+  "ignoreList": []
 }

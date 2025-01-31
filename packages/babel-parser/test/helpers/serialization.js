@@ -12,7 +12,7 @@ const isExtended = filename => /\.extended\.json$/.test(filename);
 // packages/babel-parser/test/fixtures/estree/bigInt/basic/output.extended.json
 //
 // This is because only estree actually includes the BigInt value in the Literal
-// node. If the JS environemnt doesn't support bigint, then estree will just
+// node. If the JS environment doesn't support bigint, then estree will just
 // use null for the value. We also happen to just throw the AST information away
 // with estree tests, so in the event that we're running on an older version of
 // Node that doesn't support bigint, it is safe to deserialize to null.
@@ -20,7 +20,6 @@ const toBigInt = global.BigInt || (() => null);
 
 const SerializationKey = "$$ babel internal serialized type";
 
-/* eslint-disable no-confusing-arrow */
 export const deserialize = (filename, options, string) =>
   withErrors(
     options.throws,
@@ -35,8 +34,8 @@ export const deserialize = (filename, options, string) =>
             !value[SerializationKey]
               ? value
               : value[SerializationKey] === "RegExp"
-              ? new RegExp(value.source, value.flags)
-              : toBigInt(value.value)),
+                ? new RegExp(value.source, value.flags)
+                : toBigInt(value.value)),
       ),
   );
 
@@ -68,34 +67,34 @@ function withErrors(throws, ast) {
 // we can test that too.
 const ErrorPrefixRegExp = /^[A-Za-z]*Error:\s/;
 const toError = message =>
-  /^Error/.test(message.replace(ErrorPrefixRegExp, ""))
+  message.replace(ErrorPrefixRegExp, "").startsWith("Error")
     ? Error(message.replace(ErrorPrefixRegExp, ""))
     : SyntaxError(message.replace(ErrorPrefixRegExp, ""));
 
-const LocRegExp = /"loc":(\s*\{(?:[^}{]+|\{(?:[^}{]+|\([^}{]*\})*\})*\})/gm;
-const StartEndRegExp = /("(start|end)":\s*(\d+),\s*){2}/gm;
+const LocRegExp = /"loc":(\s*\{(?:[^}{]|\{(?:[^}{(]|\([^}{]*\})*\})*\})/g;
+const StartEndRegExp = /("(start|end)":\s*(\d+),\s*){2}/g;
 const CompactRegExp = new RegExp(
   `${StartEndRegExp.source}${LocRegExp.source}`,
-  "gm",
+  "g",
 );
 
 export function serialize(value) {
   let extended = false;
-  const toExended = (name, data) => (
+  const toExtended = (name, data) => (
     (extended = true), { [SerializationKey]: name, ...data }
   );
   const encode = (key, value) =>
     typeof value === "bigint"
-      ? toExended("bigint", { value: value + "" })
+      ? toExtended("bigint", { value: value + "" })
       : value instanceof RegExp
-      ? toExended("RegExp", { source: value.source, flags: value.flags })
-      : value instanceof Error
-      ? value + ""
-      : value;
+        ? toExtended("RegExp", { source: value.source, flags: value.flags })
+        : value instanceof Error
+          ? value + ""
+          : value;
   const serialized = stringify(value, encode, 2).replace(
     CompactRegExp,
     // This is safe since none of the values can have spaces in them.
-    string => string.replace(/\s+/gm, () => ""),
+    string => string.replace(/\s+/g, () => ""),
   );
 
   return [extended, serialized];

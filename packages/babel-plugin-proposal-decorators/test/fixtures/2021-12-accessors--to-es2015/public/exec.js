@@ -1,8 +1,10 @@
 function dec({ get, set }, context) {
-  context.addInitializer((instance) => {
-    instance[context.name + 'Context'] = context;
+  context.addInitializer(function() {
+    this[context.name + 'Context'] = context;
   });
 
+  expect(get.name).toEqual("get " + context.name);
+  expect(set.name).toEqual("set " + context.name);
   return {
     get() {
       return get.call(this) + 1;
@@ -12,7 +14,7 @@ function dec({ get, set }, context) {
       set.call(this, v + 1);
     },
 
-    initializer(v) {
+    init(v) {
       return v ? v : 1;
     }
   }

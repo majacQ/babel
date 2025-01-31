@@ -3,17 +3,21 @@
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const babel = require("@babel/core");
 const findCacheDir = require("find-cache-dir");
 
-const DEFAULT_CACHE_DIR =
-  findCacheDir({ name: "@babel/register" }) || os.homedir() || os.tmpdir();
-const DEFAULT_FILENAME = path.join(
-  DEFAULT_CACHE_DIR,
-  `.babel.${babel.version}.${babel.getEnv()}.json`,
-);
+let FILENAME = process.env.BABEL_CACHE_PATH;
 
-const FILENAME = process.env.BABEL_CACHE_PATH || DEFAULT_FILENAME;
+// This function needs to be exported before requiring ./babel-core, because
+// there is a circular dependency between these two files.
+exports.initializeCacheFilename = function () {
+  FILENAME ||= path.join(
+    findCacheDir({ name: "@babel/register" }) || os.homedir() || os.tmpdir(),
+    `.babel.${babel.version}.${babel.getEnv()}.json`,
+  );
+};
+
+const babel = require("./babel-core.js");
+
 let data = {};
 
 let cacheDirty = false;
@@ -35,7 +39,7 @@ function save() {
   let serialised = "{}";
 
   try {
-    serialised = JSON.stringify(data, null, "  ");
+    serialised = JSON.stringify(data);
   } catch (err) {
     if (err.message === "Invalid string length") {
       err.message = "Cache too large so it's been cleared.";

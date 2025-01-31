@@ -1,7 +1,9 @@
 import { declare } from "@babel/helper-plugin-utils";
 import {
+  buildDynamicImport,
   isModule,
   rewriteModuleStatementsAndPrepareHeader,
+  type RewriteModuleStatementsAndPrepareHeaderOptions,
   hasExports,
   isSideEffectImport,
   buildNamespaceInitStatements,
@@ -10,33 +12,56 @@ import {
   getModuleName,
 } from "@babel/helper-module-transforms";
 import { template, types as t } from "@babel/core";
-import { getImportSource } from "babel-plugin-dynamic-import-node/utils";
+import type { PluginOptions } from "@babel/helper-module-transforms";
+import type { NodePath, PluginPass } from "@babel/core";
 
-const buildWrapper = template(`
+const buildWrapper = template.statement(`
   define(MODULE_NAME, AMD_ARGUMENTS, function(IMPORT_NAMES) {
   })
 `);
 
-const buildAnonymousWrapper = template(`
+const buildAnonymousWrapper = template.statement(`
   define(["require"], function(REQUIRE) {
   })
 `);
 
-function injectWrapper(path, wrapper) {
+function injectWrapper(
+  path: NodePath<t.Program>,
+  wrapper: t.ExpressionStatement,
+) {
   const { body, directives } = path.node;
   path.node.directives = [];
   path.node.body = [];
-  const amdWrapper = path.pushContainer("body", wrapper)[0];
-  const amdFactory = amdWrapper
-    .get("expression.arguments")
-    .filter(arg => arg.isFunctionExpression())[0]
-    .get("body");
+  const amdFactoryCall = path
+    .pushContainer("body", wrapper)[0]
+    .get("expression") as NodePath<t.CallExpression>;
+  const amdFactoryCallArgs = amdFactoryCall.get("arguments");
+  const amdFactory = (
+    amdFactoryCallArgs[
+      amdFactoryCallArgs.length - 1
+    ] as NodePath<t.FunctionExpression>
+  ).get("body");
   amdFactory.pushContainer("directives", directives);
   amdFactory.pushContainer("body", body);
 }
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options extends PluginOptions {
+  allowTopLevelThis?: boolean;
+  importInterop?: RewriteModuleStatementsAndPrepareHeaderOptions["importInterop"];
+  loose?: boolean;
+  noInterop?: boolean;
+  strict?: boolean;
+  strictMode?: boolean;
+}
+
+type State = {
+  requireId?: t.Identifier;
+  resolveId?: t.Identifier;
+  rejectId?: t.Identifier;
+};
+
+export default declare<State>((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const { allowTopLevelThis, strict, strictMode, importInterop, noInterop } =
     options;
@@ -54,9 +79,14 @@ export default declare((api, options) => {
     },
 
     visitor: {
-      CallExpression(path, state) {
+      ["CallExpression" +
+        (api.types.importExpression ? "|ImportExpression" : "")](
+        this: State & PluginPass,
+        path: NodePath<t.CallExpression | t.ImportExpression>,
+        state: State,
+      ) {
         if (!this.file.has("@babel/plugin-proposal-dynamic-import")) return;
-        if (!path.get("callee").isImport()) return;
+        if (path.isCallExpression() && !path.get("callee").isImport()) return;
 
         let { requireId, resolveId, rejectId } = state;
         if (!requireId) {
@@ -71,27 +101,36 @@ export default declare((api, options) => {
         }
 
         let result: t.Node = t.identifier("imported");
-        if (!noInterop) result = wrapInterop(path, result, "namespace");
+        if (!noInterop) {
+          result = wrapInterop(this.file.path, result, "namespace");
+        }
 
         path.replaceWith(
-          template.expression.ast`
-            new Promise((${resolveId}, ${rejectId}) =>
-              ${requireId}(
-                [${getImportSource(t, path.node)}],
-                imported => ${t.cloneNode(resolveId)}(${result}),
-                ${t.cloneNode(rejectId)}
+          buildDynamicImport(
+            path.node,
+            false,
+            false,
+            specifier => template.expression.ast`
+              new Promise((${resolveId}, ${rejectId}) =>
+                ${requireId}(
+                  [${specifier}],
+                  imported => ${t.cloneNode(resolveId)}(${result}),
+                  ${t.cloneNode(rejectId)}
+                )
               )
-            )`,
+            `,
+          ),
         );
       },
-
       Program: {
         exit(path, { requireId }) {
           if (!isModule(path)) {
             if (requireId) {
               injectWrapper(
                 path,
-                buildAnonymousWrapper({ REQUIRE: t.cloneNode(requireId) }),
+                buildAnonymousWrapper({
+                  REQUIRE: t.cloneNode(requireId),
+                }) as t.ExpressionStatement,
               );
             }
             return;
@@ -118,6 +157,7 @@ export default declare((api, options) => {
               allowTopLevelThis,
               importInterop,
               noInterop,
+              filename: this.file.opts.filename,
             },
           );
 
@@ -169,7 +209,7 @@ export default declare((api, options) => {
 
               AMD_ARGUMENTS: t.arrayExpression(amdArgs),
               IMPORT_NAMES: importNames,
-            }),
+            }) as t.ExpressionStatement,
           );
         },
       },

@@ -1,14 +1,19 @@
 import { declare } from "@babel/helper-plugin-utils";
-import convertFunctionParams from "./params";
-import convertFunctionRest from "./rest";
+import convertFunctionParams from "./params.ts";
+import convertFunctionRest from "./rest.ts";
 export { convertFunctionParams };
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options {
+  loose?: boolean;
+}
+
+export default declare((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const ignoreFunctionLength =
     api.assumption("ignoreFunctionLength") ?? options.loose;
-  const noNewArrows = api.assumption("noNewArrows");
+  // Todo(BABEL 8): Consider default it to false
+  const noNewArrows = api.assumption("noNewArrows") ?? true;
 
   return {
     name: "transform-parameters",
@@ -22,7 +27,10 @@ export default declare((api, options) => {
             .some(param => param.isRestElement() || param.isAssignmentPattern())
         ) {
           // default/rest visitors require access to `arguments`, so it cannot be an arrow
-          path.arrowFunctionToExpression({ noNewArrows });
+          path.arrowFunctionToExpression({
+            allowInsertArrowWithRest: false,
+            noNewArrows,
+          });
 
           // In some cases arrowFunctionToExpression replaces the function with a wrapper.
           // Return early; the wrapped function will be visited later in the AST traversal.

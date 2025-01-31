@@ -1,11 +1,14 @@
 const fs = require("fs");
 const assert = require("assert");
+const readline = require("readline");
 
 // For Node.js <= 10
 if (!assert.match) assert.match = (val, re) => assert(re.test(val));
 
-const run = function* () {
+const run = (async function* () {
   assert.match(yield, /Successfully compiled 2 files with Babel \(\d+ms\)\./);
+
+  assert.equal(yield, "The watcher is ready.");
 
   logFile("lib/index.js");
   logFile("lib/main.js");
@@ -16,17 +19,18 @@ const run = function* () {
 
   logFile("lib/index.js");
   logFile("lib/main.js");
-}();
+})();
 
 run.next();
 
-process.stdin.on("data", function listener(chunk) {
-  const str = String(chunk).trim();
+const rl = readline.createInterface(process.stdin);
+
+rl.on("line", async function listener(str) {
   if (!str) return;
 
   console.log(str);
 
-  if (run.next(str).done) {
+  if ((await run.next(str)).done) {
     process.exit(0);
   }
 });

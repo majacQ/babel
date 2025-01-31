@@ -1,33 +1,23 @@
-var _computedKey, _computedKey2, _initStatic;
-
+var _Foo;
+let _initStatic;
 const dec = () => {};
-
-_computedKey = 'b'
-_computedKey2 = 'b'
-
 class Foo {
   static get a() {
     return this.value;
   }
-
   static set a(v) {
     this.value = v;
   }
-
-  static get [_computedKey]() {
+  static get ['b']() {
     return this.value;
   }
-
-  static set [_computedKey2](v) {
+  static set ['b'](v) {
     this.value = v;
   }
-
 }
-
+_Foo = Foo;
 (() => {
-  [_initStatic] = babelHelpers.applyDecs(Foo, [[dec, 8, "a"], [dec, 9, "a"], [dec, 8, _computedKey], [dec, 9, _computedKey2]], []);
-
-  _initStatic(Foo);
+  [_initStatic] = babelHelpers.applyDecs(_Foo, [[dec, 8, "a"], [dec, 9, "a"], [dec, 8, 'b'], [dec, 9, 'b']], []);
+  _initStatic(_Foo);
 })();
-
 babelHelpers.defineProperty(Foo, "value", 1);

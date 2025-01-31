@@ -1,6 +1,6 @@
 {
   "name": "@babel/preset-react",
-  "version": "7.16.7",
+  "version": "7.26.3",
   "description": "Babel preset for all React plugins.",
   "author": "The Babel Team (https://babel.dev/team)",
   "homepage": "https://babel.dev/docs/en/next/babel-preset-react",
@@ -35,14 +35,28 @@
   },
   "conditions": {
     "BABEL_8_BREAKING": [
-      null,
+      {
+        "engines": {
+          "node": "^18.20.0 || ^20.17.0 || >=22.8.0"
+        }
+      },
       {
         "exports": null
+      }
+    ],
+    "USE_ESM": [
+      null,
+      {
+        "type": "commonjs"
       }
     ]
   },
   "exports": {
-    ".": "./lib/index.js",
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./package.json": "./package.json"
-  }
+  },
+  "type": "module"
 }

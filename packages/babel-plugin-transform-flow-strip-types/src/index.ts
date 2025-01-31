@@ -1,11 +1,16 @@
 import { declare } from "@babel/helper-plugin-utils";
 import syntaxFlow from "@babel/plugin-syntax-flow";
-import { types as t } from "@babel/core";
+import { types as t, type NodePath } from "@babel/core";
 
-export default declare((api, opts) => {
-  api.assertVersion(7);
+export interface Options {
+  requireDirective?: boolean;
+  allowDeclareFields?: boolean;
+}
 
-  const FLOW_DIRECTIVE = /(@flow(\s+(strict(-local)?|weak))?|@noflow)/;
+export default declare((api, opts: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
+
+  const FLOW_DIRECTIVE = /@flow(?:\s+(?:strict(?:-local)?|weak))?|@noflow/;
 
   let skipStrip = false;
 
@@ -58,6 +63,7 @@ export default declare((api, opts) => {
 
         let typeCount = 0;
 
+        // @ts-expect-error importKind is only in importSpecifier
         path.node.specifiers.forEach(({ importKind }) => {
           if (importKind === "type" || importKind === "typeof") {
             typeCount++;
@@ -69,7 +75,11 @@ export default declare((api, opts) => {
         }
       },
 
-      Flow(path) {
+      Flow(
+        path: NodePath<
+          t.Flow | t.ImportDeclaration | t.ExportDeclaration | t.ImportSpecifier
+        >,
+      ) {
         if (skipStrip) {
           throw path.buildCodeFrameError(
             "A @flow directive is required when using Flow annotations with " +
@@ -125,7 +135,11 @@ export default declare((api, opts) => {
 
       AssignmentPattern({ node }) {
         if (skipStrip) return;
-        node.left.optional = false;
+        // @ts-expect-error optional is not in TSAsExpression
+        if (node.left.optional) {
+          // @ts-expect-error optional is not in TSAsExpression
+          node.left.optional = false;
+        }
       },
 
       Function({ node }) {
@@ -138,26 +152,40 @@ export default declare((api, opts) => {
           node.params.shift();
         }
         for (let i = 0; i < node.params.length; i++) {
-          const param = node.params[i];
-          param.optional = false;
+          let param = node.params[i];
           if (param.type === "AssignmentPattern") {
-            param.left.optional = false;
+            // @ts-expect-error: refine AST types, the left of an assignment pattern as a binding
+            // must not be a MemberExpression
+            param = param.left;
+          }
+          // @ts-expect-error optional is not in TSAsExpression
+          if (param.optional) {
+            // @ts-expect-error optional is not in TSAsExpression
+            param.optional = false;
           }
         }
 
-        node.predicate = null;
+        if (!t.isMethod(node)) {
+          node.predicate = null;
+        }
       },
 
       TypeCastExpression(path) {
         if (skipStrip) return;
         let { node } = path;
         do {
+          // @ts-expect-error node is a search pointer
           node = node.expression;
         } while (t.isTypeCastExpression(node));
         path.replaceWith(node);
       },
 
       CallExpression({ node }) {
+        if (skipStrip) return;
+        node.typeArguments = null;
+      },
+
+      JSXOpeningElement({ node }) {
         if (skipStrip) return;
         node.typeArguments = null;
       },

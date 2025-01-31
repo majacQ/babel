@@ -2,7 +2,7 @@ import { declare } from "@babel/helper-plugin-utils";
 import { types as t } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
   return {
     name: "transform-jscript",
@@ -19,6 +19,7 @@ export default declare(api => {
                 null,
                 [],
                 t.blockStatement([
+                  // @ts-expect-error t.toStatement must return a FunctionDeclaration if node.id is defined
                   t.toStatement(node),
                   t.returnStatement(t.cloneNode(node.id)),
                 ]),

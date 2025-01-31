@@ -1,9 +1,11 @@
 import { declare } from "@babel/helper-plugin-utils";
-import type { NodePath } from "@babel/traverse";
-import type * as t from "@babel/types";
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options {
+  spec?: boolean;
+}
+
+export default declare((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const noNewArrows = api.assumption("noNewArrows") ?? !options.spec;
 
@@ -11,20 +13,28 @@ export default declare((api, options) => {
     name: "transform-arrow-functions",
 
     visitor: {
-      ArrowFunctionExpression(path: NodePath<t.ArrowFunctionExpression>) {
+      ArrowFunctionExpression(path) {
         // In some conversion cases, it may have already been converted to a function while this callback
         // was queued up.
         if (!path.isArrowFunctionExpression()) return;
 
-        path.arrowFunctionToExpression({
-          // While other utils may be fine inserting other arrows to make more transforms possible,
-          // the arrow transform itself absolutely cannot insert new arrow functions.
-          allowInsertArrow: false,
-          noNewArrows,
+        if (process.env.BABEL_8_BREAKING) {
+          path.arrowFunctionToExpression({
+            // While other utils may be fine inserting other arrows to make more transforms possible,
+            // the arrow transform itself absolutely cannot insert new arrow functions.
+            allowInsertArrow: false,
+            noNewArrows,
+          });
+        } else {
+          path.arrowFunctionToExpression({
+            allowInsertArrow: false,
+            noNewArrows,
 
-          // TODO(Babel 8): This is only needed for backward compat with @babel/traverse <7.13.0
-          specCompliant: !noNewArrows,
-        });
+            // This is only needed for backward compat with @babel/traverse <7.13.0
+            // @ts-ignore(Babel 7 vs Babel 8) Removed in Babel 8
+            specCompliant: !noNewArrows,
+          });
+        }
       },
     },
   };

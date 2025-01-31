@@ -1,8 +1,8 @@
 import { declare } from "@babel/helper-plugin-utils";
-import { types as t } from "@babel/core";
+import { types as t, type NodePath } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
   return {
     name: "transform-new-target",
@@ -27,7 +27,13 @@ export default declare(api => {
               return true;
             }
             return false;
-          });
+          }) as NodePath<
+            | t.FunctionDeclaration
+            | t.FunctionExpression
+            | t.Class
+            | t.ClassMethod
+            | t.ClassPrivateMethod
+          >;
 
           if (!func) {
             throw path.buildCodeFrameError(
@@ -36,13 +42,9 @@ export default declare(api => {
           }
 
           const { node } = func;
-          if (!node.id) {
-            if (func.isMethod()) {
-              path.replaceWith(scope.buildUndefinedNode());
-              return;
-            }
-
-            node.id = scope.generateUidIdentifier("target");
+          if (t.isMethod(node)) {
+            path.replaceWith(scope.buildUndefinedNode());
+            return;
           }
 
           const constructor = t.memberExpression(
@@ -53,6 +55,23 @@ export default declare(api => {
           if (func.isClass()) {
             path.replaceWith(constructor);
             return;
+          }
+
+          if (!node.id) {
+            node.id = scope.generateUidIdentifier("target");
+          } else {
+            // packages/babel-helper-create-class-features-plugin/src/fields.ts#L192 unshadow
+            let scope = path.scope;
+            const name = node.id.name;
+            while (scope !== func.parentPath.scope) {
+              if (
+                scope.hasOwnBinding(name) &&
+                !scope.bindingIdentifierEquals(name, node.id)
+              ) {
+                scope.rename(name);
+              }
+              scope = scope.parent;
+            }
           }
 
           path.replaceWith(

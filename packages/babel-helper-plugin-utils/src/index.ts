@@ -1,53 +1,75 @@
-export function declare<
-  Args extends
-    | [any]
-    | [any, any?]
-    | [any, any?, any?]
-    | [any, any]
-    | [any, any, any?]
-    | [any, any, any],
-  Builder extends (...args: Args) => any,
->(
-  builder: Builder,
-  // todo(flow->ts) maybe add stricter type for returned function
-  // reason any is there to not expose exact implementation details in type
-  // example of issue with this packages/babel-preset-typescript/src/index.ts
-): Builder extends (...args: infer A) => any ? (...args: A) => any : never {
-  // @ts-ignore
-  return (api, options, dirname) => {
-    let clonedApi;
+import type {
+  PluginAPI,
+  PluginObject,
+  PluginPass,
+  PresetAPI,
+  PresetObject,
+} from "@babel/core";
 
-    for (const name of Object.keys(apiPolyfills)) {
+type APIPolyfillFactory<T extends keyof PluginAPI> = (
+  api: PluginAPI,
+) => PluginAPI[T];
+
+type APIPolyfills = {
+  assertVersion: APIPolyfillFactory<"assertVersion">;
+};
+
+const apiPolyfills: APIPolyfills = {
+  // Not supported by Babel 7 and early versions of Babel 7 beta.
+  // It's important that this is polyfilled for older Babel versions
+  // since it's needed to report the version mismatch.
+  assertVersion: (api: PluginAPI) => (range: number | string) => {
+    throwVersionError(range, api.version);
+  },
+};
+if (!process.env.BABEL_8_BREAKING) {
+  Object.assign(apiPolyfills, {
+    // This is supported starting from Babel 7.13
+    targets: () => (): any => {
+      return {};
+    },
+    // This is supported starting from Babel 7.13
+    assumption: () => (): any => {
+      return undefined;
+    },
+    // This is supported starting from Babel 7.17
+    addExternalDependency: () => () => {},
+  });
+}
+
+export function declare<State = object, Option = object>(
+  builder: (
+    api: PluginAPI,
+    options: Option,
+    dirname: string,
+  ) => PluginObject<State & PluginPass>,
+): (
+  api: PluginAPI,
+  options: Option,
+  dirname: string,
+) => PluginObject<State & PluginPass> {
+  return (api, options: Option, dirname: string) => {
+    let clonedApi: PluginAPI;
+
+    for (const name of Object.keys(
+      apiPolyfills,
+    ) as (keyof typeof apiPolyfills)[]) {
       if (api[name]) continue;
 
-      // TODO: Use ??= when flow lets us to do so
-      clonedApi = clonedApi ?? copyApiObject(api);
+      clonedApi ??= copyApiObject(api);
       clonedApi[name] = apiPolyfills[name](clonedApi);
     }
 
-    // @ts-ignore
+    // @ts-expect-error options || {} may not be assigned to Options
     return builder(clonedApi ?? api, options || {}, dirname);
   };
 }
 
-const apiPolyfills = {
-  // Not supported by Babel 7 and early versions of Babel 7 beta.
-  // It's important that this is polyfilled for older Babel versions
-  // since it's needed to report the version mismatch.
-  assertVersion: api => range => {
-    throwVersionError(range, api.version);
-  },
-  // This is supported starting from Babel 7.13
-  // TODO(Babel 8): Remove this polyfill
-  targets: () => () => {
-    return {};
-  },
-  // This is supported starting from Babel 7.13
-  // TODO(Babel 8): Remove this polyfill
-  assumption: () => () => {},
-};
+export const declarePreset = declare as <Option = object>(
+  builder: (api: PresetAPI, options: Option, dirname: string) => PresetObject,
+) => (api: PresetAPI, options: Option, dirname: string) => PresetObject;
 
-function copyApiObject(api) {
+function copyApiObject(api: PluginAPI): PluginAPI {
   // Babel >= 7 <= beta.41 passed the API as a new object that had
   // babel/core as the prototype. While slightly faster, it also
   // means that the Object.assign copy below fails. Rather than
@@ -58,10 +80,10 @@ function copyApiObject(api) {
     proto = Object.getPrototypeOf(api);
     if (
       proto &&
-      (!has(proto, "version") ||
-        !has(proto, "transform") ||
-        !has(proto, "template") ||
-        !has(proto, "types"))
+      (!Object.hasOwn(proto, "version") ||
+        !Object.hasOwn(proto, "transform") ||
+        !Object.hasOwn(proto, "template") ||
+        !Object.hasOwn(proto, "types"))
     ) {
       proto = null;
     }
@@ -73,11 +95,7 @@ function copyApiObject(api) {
   };
 }
 
-function has(obj, key) {
-  return Object.prototype.hasOwnProperty.call(obj, key);
-}
-
-function throwVersionError(range, version) {
+function throwVersionError(range: string | number, version: string) {
   if (typeof range === "number") {
     if (!Number.isInteger(range)) {
       throw new Error("Expected string or integer value.");

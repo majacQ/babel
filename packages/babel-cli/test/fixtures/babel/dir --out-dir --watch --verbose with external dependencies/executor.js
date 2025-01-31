@@ -1,14 +1,17 @@
 const fs = require("fs");
 const assert = require("assert");
+const readline = require("readline");
 
 // For Node.js <= 10
 if (!assert.match) assert.match = (val, re) => assert(re.test(val));
 
-const run = (function* () {
+const run = (async function* () {
   let files = [yield, yield].sort();
   assert.match(files[0], /src[\\/]index.js -> lib[\\/]index.js/);
   assert.match(files[1], /src[\\/]main.js -> lib[\\/]main.js/);
   assert.match(yield, /Successfully compiled 2 files with Babel \(\d+ms\)\./);
+
+  assert.equal(yield, "The watcher is ready.");
 
   logFile("lib/index.js");
   logFile("lib/main.js");
@@ -28,9 +31,9 @@ run.next();
 
 const batchedStrings = [];
 let batchId = 0;
+const rl = readline.createInterface(process.stdin);
 
-process.stdin.on("data", function listener(chunk) {
-  const str = String(chunk).trim();
+rl.on("line", async function listener(str) {
   if (!str) return;
 
   if (str.startsWith("src")) {
@@ -50,7 +53,7 @@ process.stdin.on("data", function listener(chunk) {
     console.log(str);
   }
 
-  if (run.next(str).done) {
+  if ((await run.next(str)).done) {
     process.exit(0);
   }
 });

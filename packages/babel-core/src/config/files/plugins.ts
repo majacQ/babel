@@ -4,14 +4,15 @@
 
 import buildDebug from "debug";
 import path from "path";
-import gensync, { type Gensync, type Handler } from "gensync";
-import { isAsync } from "../../gensync-utils/async";
-import loadCjsOrMjsDefault, { supportsESM } from "./module-types";
+import type { Handler } from "gensync";
+import { isAsync } from "../../gensync-utils/async.ts";
+import loadCodeDefault, { supportsESM } from "./module-types.ts";
 import { fileURLToPath, pathToFileURL } from "url";
 
-import importMetaResolve from "./import-meta-resolve";
+import { resolve as importMetaResolve } from "../../vendor/import-meta-resolve.js";
 
 import { createRequire } from "module";
+import { existsSync } from "fs";
 const require = createRequire(import.meta.url);
 
 const debug = buildDebug("babel:config:loading:files:plugins");
@@ -27,21 +28,16 @@ const OTHER_PRESET_ORG_RE =
   /^(@(?!babel\/)[^/]+\/)(?![^/]*babel-preset(?:-|\/|$)|[^/]+\/)/;
 const OTHER_ORG_DEFAULT_RE = /^(@(?!babel$)[^/]+)$/;
 
-export function* resolvePlugin(name: string, dirname: string): Handler<string> {
-  return yield* resolveStandardizedName("plugin", name, dirname);
-}
-
-export function* resolvePreset(name: string, dirname: string): Handler<string> {
-  return yield* resolveStandardizedName("preset", name, dirname);
-}
+export const resolvePlugin = resolveStandardizedName.bind(null, "plugin");
+export const resolvePreset = resolveStandardizedName.bind(null, "preset");
 
 export function* loadPlugin(
   name: string,
   dirname: string,
 ): Handler<{ filepath: string; value: unknown }> {
-  const filepath = yield* resolvePlugin(name, dirname);
+  const { filepath, loader } = resolvePlugin(name, dirname, yield* isAsync());
 
-  const value = yield* requireModule("plugin", filepath);
+  const value = yield* requireModule("plugin", loader, filepath);
   debug("Loaded plugin %o from %o.", name, dirname);
 
   return { filepath, value };
@@ -51,9 +47,9 @@ export function* loadPreset(
   name: string,
   dirname: string,
 ): Handler<{ filepath: string; value: unknown }> {
-  const filepath = yield* resolvePreset(name, dirname);
+  const { filepath, loader } = resolvePreset(name, dirname, yield* isAsync());
 
-  const value = yield* requireModule("preset", filepath);
+  const value = yield* requireModule("preset", loader, filepath);
 
   debug("Loaded preset %o from %o.", name, dirname);
 
@@ -100,7 +96,7 @@ function* resolveAlternativesHelper(
   const { error, value } = yield standardizedName;
   if (!error) return value;
 
-  // @ts-ignore
+  // @ts-expect-error code may not index error
   if (error.code !== "MODULE_NOT_FOUND") throw error;
 
   if (standardizedName !== name && !(yield name).error) {
@@ -116,32 +112,52 @@ function* resolveAlternativesHelper(
     error.message += `\n- Did you accidentally pass a ${oppositeType} as a ${type}?`;
   }
 
+  if (type === "plugin") {
+    const transformName = standardizedName.replace("-proposal-", "-transform-");
+    if (transformName !== standardizedName && !(yield transformName).error) {
+      error.message += `\n- Did you mean "${transformName}"?`;
+    }
+  }
+
+  error.message += `\n
+Make sure that all the Babel plugins and presets you are using
+are defined as dependencies or devDependencies in your package.json
+file. It's possible that the missing plugin is loaded by a preset
+you are using that forgot to add the plugin to its dependencies: you
+can workaround this problem by explicitly adding the missing package
+to your top-level package.json.
+`;
+
   throw error;
 }
 
 function tryRequireResolve(
-  id: Parameters<RequireResolve>[0],
-  { paths: [dirname] }: Parameters<RequireResolve>[1],
+  id: string,
+  dirname: string | undefined,
 ): Result<string> {
   try {
-    return { error: null, value: require.resolve(id, { paths: [dirname] }) };
+    if (dirname) {
+      return { error: null, value: require.resolve(id, { paths: [dirname] }) };
+    } else {
+      return { error: null, value: require.resolve(id) };
+    }
   } catch (error) {
     return { error, value: null };
   }
 }
 
-async function tryImportMetaResolve(
-  id: Parameters<ImportMeta["resolve"]>[0],
-  options: Parameters<ImportMeta["resolve"]>[1],
-): Promise<Result<string>> {
+function tryImportMetaResolve(
+  id: Parameters<typeof importMetaResolve>[0],
+  options: Parameters<typeof importMetaResolve>[1],
+): Result<string> {
   try {
-    return { error: null, value: await importMetaResolve(id, options) };
+    return { error: null, value: importMetaResolve(id, options) };
   } catch (error) {
     return { error, value: null };
   }
 }
 
-function resolveStandardizedNameForRequrie(
+function resolveStandardizedNameForRequire(
   type: "plugin" | "preset",
   name: string,
   dirname: string,
@@ -149,11 +165,11 @@ function resolveStandardizedNameForRequrie(
   const it = resolveAlternativesHelper(type, name);
   let res = it.next();
   while (!res.done) {
-    res = it.next(tryRequireResolve(res.value, { paths: [dirname] }));
+    res = it.next(tryRequireResolve(res.value, dirname));
   }
-  return res.value;
+  return { loader: "require" as const, filepath: res.value };
 }
-async function resolveStandardizedNameForImport(
+function resolveStandardizedNameForImport(
   type: "plugin" | "preset",
   name: string,
   dirname: string,
@@ -165,41 +181,51 @@ async function resolveStandardizedNameForImport(
   const it = resolveAlternativesHelper(type, name);
   let res = it.next();
   while (!res.done) {
-    res = it.next(await tryImportMetaResolve(res.value, parentUrl));
+    res = it.next(tryImportMetaResolve(res.value, parentUrl));
   }
-  return fileURLToPath(res.value);
+  return { loader: "auto" as const, filepath: fileURLToPath(res.value) };
 }
 
-const resolveStandardizedName: Gensync<
-  (type: "plugin" | "preset", name: string, dirname?: string) => string
-> = gensync({
-  sync(type, name, dirname = process.cwd()) {
-    return resolveStandardizedNameForRequrie(type, name, dirname);
-  },
-  async async(type, name, dirname = process.cwd()) {
-    if (!supportsESM) {
-      return resolveStandardizedNameForRequrie(type, name, dirname);
-    }
+function resolveStandardizedName(
+  type: "plugin" | "preset",
+  name: string,
+  dirname: string,
+  allowAsync: boolean,
+) {
+  if (!supportsESM || !allowAsync) {
+    return resolveStandardizedNameForRequire(type, name, dirname);
+  }
 
-    try {
-      return await resolveStandardizedNameForImport(type, name, dirname);
-    } catch (e) {
-      try {
-        return resolveStandardizedNameForRequrie(type, name, dirname);
-      } catch (e2) {
-        if (e.type === "MODULE_NOT_FOUND") throw e;
-        if (e2.type === "MODULE_NOT_FOUND") throw e2;
-        throw e;
-      }
+  try {
+    const resolved = resolveStandardizedNameForImport(type, name, dirname);
+    // import-meta-resolve 4.0 does not throw if the module is not found.
+    if (!existsSync(resolved.filepath)) {
+      throw Object.assign(
+        new Error(`Could not resolve "${name}" in file ${dirname}.`),
+        { type: "MODULE_NOT_FOUND" },
+      );
     }
-  },
-});
+    return resolved;
+  } catch (e) {
+    try {
+      return resolveStandardizedNameForRequire(type, name, dirname);
+    } catch (e2) {
+      if (e.type === "MODULE_NOT_FOUND") throw e;
+      if (e2.type === "MODULE_NOT_FOUND") throw e2;
+      throw e;
+    }
+  }
+}
 
 if (!process.env.BABEL_8_BREAKING) {
   // eslint-disable-next-line no-var
   var LOADING_MODULES = new Set();
 }
-function* requireModule(type: string, name: string): Handler<unknown> {
+function* requireModule(
+  type: string,
+  loader: "require" | "auto",
+  name: string,
+): Handler<unknown> {
   if (!process.env.BABEL_8_BREAKING) {
     if (!(yield* isAsync()) && LOADING_MODULES.has(name)) {
       throw new Error(
@@ -214,16 +240,34 @@ function* requireModule(type: string, name: string): Handler<unknown> {
     if (!process.env.BABEL_8_BREAKING) {
       LOADING_MODULES.add(name);
     }
-    return yield* loadCjsOrMjsDefault(
-      name,
-      `You appear to be using a native ECMAScript module ${type}, ` +
-        "which is only supported when running Babel asynchronously.",
-      // For backward compatiblity, we need to support malformed presets
-      // defined as separate named exports rather than a single default
-      // export.
-      // See packages/babel-core/test/fixtures/option-manager/presets/es2015_named.js
-      true,
-    );
+
+    if (process.env.BABEL_8_BREAKING) {
+      return yield* loadCodeDefault(
+        name,
+        loader,
+        `You appear to be using a native ECMAScript module ${type}, ` +
+          "which is only supported when running Babel asynchronously " +
+          "or when using the Node.js `--experimental-require-module` flag.",
+        `You appear to be using a ${type} that contains top-level await, ` +
+          "which is only supported when running Babel asynchronously.",
+      );
+    } else {
+      return yield* loadCodeDefault(
+        name,
+        loader,
+        `You appear to be using a native ECMAScript module ${type}, ` +
+          "which is only supported when running Babel asynchronously " +
+          "or when using the Node.js `--experimental-require-module` flag.",
+        `You appear to be using a ${type} that contains top-level await, ` +
+          "which is only supported when running Babel asynchronously.",
+        // For backward compatibility, we need to support malformed presets
+        // defined as separate named exports rather than a single default
+        // export.
+        // See packages/babel-core/test/fixtures/option-manager/presets/es2015_named.js
+        // @ts-ignore(Babel 7 vs Babel 8) This param has been removed
+        true,
+      );
+    }
   } catch (err) {
     err.message = `[BABEL]: ${err.message} (While processing: ${name})`;
     throw err;

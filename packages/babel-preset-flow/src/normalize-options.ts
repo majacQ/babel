@@ -2,7 +2,7 @@ import { OptionValidator } from "@babel/helper-validator-option";
 const v = new OptionValidator("@babel/preset-flow");
 
 export default function normalizeOptions(options: any = {}) {
-  let { all } = options;
+  let { all, ignoreExtensions, experimental_useHermesParser } = options;
   const { allowDeclareFields } = options;
 
   if (process.env.BABEL_8_BREAKING) {
@@ -12,14 +12,30 @@ export default function normalizeOptions(options: any = {}) {
     );
     const TopLevelOptions = {
       all: "all",
+      ignoreExtensions: "ignoreExtensions",
+      experimental_useHermesParser: "experimental_useHermesParser",
     };
     v.validateTopLevelOptions(options, TopLevelOptions);
-    all = v.validateBooleanOption(TopLevelOptions.all, options.all);
-    return { all };
+    all = v.validateBooleanOption(TopLevelOptions.all, all);
+    ignoreExtensions = v.validateBooleanOption(
+      TopLevelOptions.ignoreExtensions,
+      ignoreExtensions,
+    );
+    experimental_useHermesParser = v.validateBooleanOption(
+      TopLevelOptions.experimental_useHermesParser,
+      experimental_useHermesParser,
+    );
+    return {
+      all,
+      ignoreExtensions,
+      experimental_useHermesParser,
+    };
   } else {
     return {
       all,
       allowDeclareFields,
+      ignoreExtensions,
+      experimental_useHermesParser,
     };
   }
 }

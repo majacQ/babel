@@ -1,97 +1,46 @@
-import commander from "commander";
 import Module from "module";
 import { inspect } from "util";
 import path from "path";
 import repl from "repl";
 import * as babel from "@babel/core";
 import vm from "vm";
-import "core-js/stable";
-import "regenerator-runtime/runtime";
+import "core-js/stable/index.js";
+import "regenerator-runtime/runtime.js";
+// @ts-expect-error @babel/register is a CommonJS module
 import register from "@babel/register";
 import { fileURLToPath } from "url";
-
 import { createRequire } from "module";
+import type { PluginAPI, PluginObject } from "@babel/core";
+
+import { program } from "./program-setup.ts";
+
 const require = createRequire(import.meta.url);
 
-const program = new commander.Command("babel-node");
-
-function collect(value, previousValue): Array<string> {
-  // If the user passed the option with no value, like "babel-node file.js --presets", do nothing.
-  if (typeof value !== "string") return previousValue;
-
-  const values = value.split(",");
-
-  if (previousValue) {
-    previousValue.push(...values);
-    return previousValue;
-  }
-  return values;
-}
-
-program.option("-e, --eval [script]", "Evaluate script");
-program.option(
-  "--no-babelrc",
-  "Specify whether or not to use .babelrc and .babelignore files",
-);
-program.option("-r, --require [module]", "Require module");
-program.option("-p, --print [code]", "Evaluate script and print result");
-program.option(
-  "-o, --only [globs]",
-  "A comma-separated list of glob patterns to compile",
-  collect,
-);
-program.option(
-  "-i, --ignore [globs]",
-  "A comma-separated list of glob patterns to skip compiling",
-  collect,
-);
-program.option(
-  "-x, --extensions [extensions]",
-  "List of extensions to hook into [.es6,.js,.es,.jsx,.mjs]",
-  collect,
-);
-program.option(
-  "--config-file [path]",
-  "Path to the babel config file to use. Defaults to working directory babel.config.js",
-);
-program.option(
-  "--env-name [name]",
-  "The name of the 'env' to use when loading configs and plugins. " +
-    "Defaults to the value of BABEL_ENV, or else NODE_ENV, or else 'development'.",
-);
-program.option(
-  "--root-mode [mode]",
-  "The project-root resolution mode. " +
-    "One of 'root' (the default), 'upward', or 'upward-optional'.",
-);
-program.option("-w, --plugins [string]", "", collect);
-program.option("-b, --presets [string]", "", collect);
-
-declare const PACKAGE_JSON: { name: string; version: string };
-program.version(PACKAGE_JSON.version);
-program.usage("[options] [ -e script | script.js ] [arguments]");
 program.parse(process.argv);
+const opts = program.opts();
 
 const babelOptions = {
   caller: {
     name: "@babel/node",
   },
-  extensions: program.extensions,
-  ignore: program.ignore,
-  only: program.only,
-  plugins: program.plugins,
-  presets: program.presets,
-  configFile: program.configFile,
-  envName: program.envName,
-  rootMode: program.rootMode,
+  extensions: opts.extensions,
+  ignore: opts.ignore,
+  only: opts.only,
+  plugins: opts.plugins,
+  presets: opts.presets,
+  configFile: opts.configFile,
+  envName: opts.envName,
+  rootMode: opts.rootMode,
 
   // Commander will default the "--no-" arguments to true, but we want to
   // leave them undefined so that @babel/core can handle the
   // default-assignment logic on its own.
-  babelrc: program.babelrc === true ? undefined : program.babelrc,
+  babelrc: opts.babelrc === true ? undefined : opts.babelrc,
 };
 
-for (const key of Object.keys(babelOptions)) {
+for (const key of Object.keys(babelOptions) as Array<
+  keyof typeof babelOptions
+>) {
   if (babelOptions[key] === undefined) {
     delete babelOptions[key];
   }
@@ -99,22 +48,23 @@ for (const key of Object.keys(babelOptions)) {
 
 register(babelOptions);
 
-const replPlugin = ({ types: t }) => ({
+const replPlugin = ({ types: t }: PluginAPI): PluginObject => ({
   visitor: {
-    ModuleDeclaration(path) {
-      throw path.buildCodeFrameError("Modules aren't supported in the REPL");
-    },
-
-    VariableDeclaration(path) {
-      if (path.node.kind !== "var") {
-        throw path.buildCodeFrameError(
-          "Only `var` variables are supported in the REPL",
-        );
-      }
-    },
-
     Program(path) {
-      if (path.get("body").some(child => child.isExpressionStatement())) return;
+      let hasExpressionStatement: boolean;
+      for (const bodyPath of path.get("body")) {
+        if (bodyPath.isExpressionStatement()) {
+          hasExpressionStatement = true;
+        } else if (
+          bodyPath.isExportDeclaration() ||
+          bodyPath.isImportDeclaration()
+        ) {
+          throw bodyPath.buildCodeFrameError(
+            "Modules aren't supported in the REPL",
+          );
+        }
+      }
+      if (hasExpressionStatement) return;
 
       // If the executed code doesn't evaluate to a value,
       // prevent implicit strict mode from printing 'use strict'.
@@ -126,14 +76,14 @@ const replPlugin = ({ types: t }) => ({
   },
 });
 
-const _eval = function (code, filename) {
+const _eval = function (code: string, filename: string) {
   code = code.trim();
   if (!code) return undefined;
 
-  code = babel.transform(code, {
+  code = babel.transformSync(code, {
     filename: filename,
-    presets: program.presets,
-    plugins: (program.plugins || []).concat([replPlugin]),
+    ...babelOptions,
+    plugins: (opts.plugins || []).concat([replPlugin]),
   }).code;
 
   return vm.runInThisContext(code, {
@@ -141,32 +91,24 @@ const _eval = function (code, filename) {
   });
 };
 
-if (program.eval || program.print) {
-  let code = program.eval;
-  if (!code || code === true) code = program.print;
+if (opts.eval || opts.print) {
+  let code = opts.eval;
+  if (!code || code === true) code = opts.print;
 
-  // @ts-expect-error todo(flow->ts)
   global.__filename = "[eval]";
-  // @ts-expect-error todo(flow->ts)
   global.__dirname = process.cwd();
 
-  // @ts-expect-error todo(flow->ts)
   const module = new Module(global.__filename);
-  // @ts-expect-error todo(flow->ts)
   module.filename = global.__filename;
   // @ts-expect-error todo(flow->ts)
   module.paths = Module._nodeModulePaths(global.__dirname);
 
-  // @ts-expect-error todo(flow->ts)
   global.exports = module.exports;
-  // @ts-expect-error todo(flow->ts)
   global.module = module;
-  // @ts-expect-error todo(flow->ts)
   global.require = module.require.bind(module);
 
-  // @ts-expect-error todo(flow->ts)
   const result = _eval(code, global.__filename);
-  if (program.print) {
+  if (opts.print) {
     const output = typeof result === "string" ? result : inspect(result);
     process.stdout.write(output + "\n");
   }
@@ -184,14 +126,14 @@ if (program.eval || program.print) {
       }
 
       if (arg[0] === "-") {
-        const parsedOption = program.options.find(option => {
+        const parsedOption = program.options.find((option: any) => {
           return option.long === arg || option.short === arg;
         });
         if (parsedOption === undefined) {
           return;
         }
         const optionName = parsedOption.attributeName();
-        const parsedArg = program[optionName];
+        const parsedArg = opts[optionName];
         if (optionName === "require" || (parsedArg && parsedArg !== true)) {
           ignoreNext = true;
         }
@@ -223,30 +165,21 @@ if (program.eval || program.print) {
 
 // We have to handle require ourselves, as we want to require it in the context of babel-register
 function requireArgs() {
-  if (program.require) {
-    require(require.resolve(program.require, {
-      paths: [process.cwd()],
-    }));
+  if (opts.require) {
+    require(
+      require.resolve(opts.require, {
+        paths: [process.cwd()],
+      }),
+    );
   }
 }
-
-function replStart() {
-  const replServer = repl.start({
-    prompt: "babel > ",
-    input: process.stdin,
-    output: process.stdout,
-    eval: replEval,
-    useGlobal: true,
-    preview: true,
-  });
-  if (process.env.BABEL_8_BREAKING) {
-    replServer.setupHistory(process.env.NODE_REPL_HISTORY, () => {});
-  } else {
-    replServer.setupHistory?.(process.env.NODE_REPL_HISTORY, () => {});
-  }
-}
-
-function replEval(code, context, filename, callback) {
+function replEval(
+  this: repl.REPLServer,
+  code: string,
+  context: vm.Context,
+  filename: string,
+  callback: (err: Error | null, result: any) => void,
+) {
   let err;
   let result;
 
@@ -261,4 +194,21 @@ function replEval(code, context, filename, callback) {
   }
 
   callback(err, result);
+}
+
+function replStart() {
+  const replServer = repl.start({
+    prompt: "babel > ",
+    input: process.stdin,
+    output: process.stdout,
+    eval: replEval,
+    useGlobal: true,
+    preview: true,
+  });
+  const NODE_REPL_HISTORY = process.env.NODE_REPL_HISTORY;
+  if (process.env.BABEL_8_BREAKING) {
+    replServer.setupHistory(NODE_REPL_HISTORY, () => {});
+  } else {
+    replServer.setupHistory?.(NODE_REPL_HISTORY, () => {});
+  }
 }

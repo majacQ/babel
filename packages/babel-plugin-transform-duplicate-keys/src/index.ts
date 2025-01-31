@@ -1,7 +1,9 @@
 import { declare } from "@babel/helper-plugin-utils";
 import { types as t } from "@babel/core";
 
-function getName(key) {
+function getName(
+  key: t.Identifier | t.StringLiteral | t.NumericLiteral | t.BigIntLiteral,
+) {
   if (t.isIdentifier(key)) {
     return key.name;
   }
@@ -9,7 +11,7 @@ function getName(key) {
 }
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
   return {
     name: "transform-duplicate-keys",
@@ -19,7 +21,7 @@ export default declare(api => {
         const { node } = path;
         const plainProps = node.properties.filter(
           prop => !t.isSpreadElement(prop) && !prop.computed,
-        );
+        ) as (t.ObjectMethod | t.ObjectProperty)[];
 
         // A property is a duplicate key if:
         // * the property is a data property, and is preceded by a data,
@@ -34,8 +36,16 @@ export default declare(api => {
         const alreadySeenSetters = Object.create(null);
 
         for (const prop of plainProps) {
-          const name = getName(prop.key);
+          const name = getName(
+            // prop must be non-computed
+            prop.key as
+              | t.Identifier
+              | t.StringLiteral
+              | t.NumericLiteral
+              | t.BigIntLiteral,
+          );
           let isDuplicate = false;
+          // @ts-expect-error prop.kind is not defined in ObjectProperty
           switch (prop.kind) {
             case "get":
               if (alreadySeenData[name] || alreadySeenGetters[name]) {

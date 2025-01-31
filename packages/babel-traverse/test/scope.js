@@ -1,8 +1,9 @@
 import { parse } from "@babel/parser";
 import * as t from "@babel/types";
+import { IS_BABEL_8 } from "$repo-utils";
 
 import _traverse, { NodePath } from "../lib/index.js";
-const traverse = _traverse.default;
+const traverse = _traverse.default || _traverse;
 
 function getPath(code, options) {
   const ast =
@@ -256,6 +257,40 @@ describe("scope", () => {
       });
     });
 
+    describe("decorator", () => {
+      const parserOptions = {
+        plugins: [["decorators", { decoratorsBeforeExport: true }]],
+      };
+      it("should not have visibility of declarations inside method body", () => {
+        expect(
+          getPath(
+            `var a = "outside"; class foo { @(() => () => a) m() { let a = "inside"; } }`,
+            parserOptions,
+          )
+            .get("body.1.body.body.0.decorators.0.expression.body.body")
+            .scope.getBinding("a").path.node.init.value,
+        ).toBe("outside");
+      });
+      it("should not have visibility on parameter bindings", () => {
+        expect(
+          getPath(
+            `var a = "outside"; class foo { @(() => () => a) m(a = "inside") {} }`,
+            parserOptions,
+          )
+            .get("body.1.body.body.0.decorators.0.expression.body.body")
+            .scope.getBinding("a").path.node.init.value,
+        ).toBe("outside");
+      });
+    });
+
+    it("switch discriminant scope", () => {
+      expect(
+        getPath(`let a = "outside"; switch (a) { default: let a = "inside" }`)
+          .get("body.1.discriminant")
+          .scope.getBinding("a").path.node.init.value,
+      ).toBe("outside");
+    });
+
     it("variable declaration", function () {
       expect(getPath("var foo = null;").scope.getBinding("foo").path.type).toBe(
         "VariableDeclarator",
@@ -352,6 +387,23 @@ describe("scope", () => {
       ).toBe("ImportSpecifier");
     });
 
+    it("import type and func with duplicate name", function () {
+      expect(() => {
+        getPath(
+          `
+            import type {Foo} from 'foo';
+            import {type Foo2} from 'foo';
+            function Foo(){}
+            function Foo2(){}
+          `,
+          {
+            plugins: ["typescript"],
+            sourceType: "module",
+          },
+        );
+      }).not.toThrow();
+    });
+
     it("variable constantness", function () {
       expect(getPath("var a = 1;").scope.getBinding("a").constant).toBe(true);
       expect(getPath("var a = 1; a = 2;").scope.getBinding("a").constant).toBe(
@@ -365,37 +417,42 @@ describe("scope", () => {
       ).toBe(false);
     });
 
-    it("purity", function () {
-      expect(
-        getPath("({ x: 1, foo() { return 1 } })")
-          .get("body")[0]
-          .get("expression")
-          .isPure(),
-      ).toBeTruthy();
-      expect(
-        getPath("class X { get foo() { return 1 } }")
-          .get("body")[0]
-          .get("expression")
-          .isPure(),
-      ).toBeFalsy();
-      expect(
-        getPath("`${a}`").get("body")[0].get("expression").isPure(),
-      ).toBeFalsy();
-      expect(
-        getPath("let a = 1; `${a}`").get("body")[1].get("expression").isPure(),
-      ).toBeTruthy();
-      expect(
-        getPath("let a = 1; `${a++}`")
-          .get("body")[1]
-          .get("expression")
-          .isPure(),
-      ).toBeFalsy();
-      expect(
-        getPath("tagged`foo`").get("body")[0].get("expression").isPure(),
-      ).toBeFalsy();
-      expect(
-        getPath("String.raw`foo`").get("body")[0].get("expression").isPure(),
-      ).toBeTruthy();
+    it("variable constantness in loops", () => {
+      let scopePath = null;
+      const isAConstant = code => {
+        let path = getPath(code);
+        if (scopePath) path = path.get(scopePath);
+        return path.scope.getBinding("a").constant;
+      };
+
+      expect(isAConstant("for (_ of ns) { var a = 1; }")).toBe(false);
+      expect(isAConstant("for (_ in ns) { var a = 1; }")).toBe(false);
+      expect(isAConstant("for (;;) { var a = 1; }")).toBe(false);
+      expect(isAConstant("while (1) { var a = 1; }")).toBe(false);
+      expect(isAConstant("do { var a = 1; } while (1)")).toBe(false);
+
+      expect(isAConstant("for (var a of ns) {}")).toBe(false);
+      expect(isAConstant("for (var a in ns) {}")).toBe(false);
+      expect(isAConstant("for (var a;;) {}")).toBe(true);
+
+      scopePath = "body.0.body.expression";
+      expect(isAConstant("for (_ of ns) () => { var a = 1; }")).toBe(true);
+      expect(isAConstant("for (_ in ns) () => { var a = 1; }")).toBe(true);
+      expect(isAConstant("for (;;) () => { var a = 1; }")).toBe(true);
+      expect(isAConstant("while (1) () => { var a = 1; }")).toBe(true);
+      expect(isAConstant("do () => { var a = 1; }; while (1)")).toBe(true);
+
+      scopePath = "body.0.body";
+      expect(isAConstant("for (_ of ns) { let a = 1; }")).toBe(true);
+      expect(isAConstant("for (_ in ns) { let a = 1; }")).toBe(true);
+      expect(isAConstant("for (;;) { let a = 1; }")).toBe(true);
+      expect(isAConstant("while (1) { let a = 1; }")).toBe(true);
+      expect(isAConstant("do { let a = 1; } while (1)")).toBe(true);
+
+      scopePath = "body.0";
+      expect(isAConstant("for (let a of ns) {}")).toBe(true);
+      expect(isAConstant("for (let a in ns) {}")).toBe(true);
+      expect(isAConstant("for (let a;;) {}")).toBe(true);
     });
 
     test("label", function () {
@@ -542,7 +599,7 @@ describe("scope", () => {
       path.scope.crawl();
       path.scope.crawl();
 
-      expect(path.scope.references._jsx).toBeTruthy();
+      expect(path.scope.references._jsx).toBe(true);
     });
 
     test("generateUid collision check after re-crawling", function () {
@@ -631,6 +688,12 @@ describe("scope", () => {
         expect(() => getPath(ast)).toThrowErrorMatchingSnapshot();
       });
 
+      it("using", () => {
+        const ast = createTryCatch("using");
+
+        expect(() => getPath(ast)).toThrowErrorMatchingSnapshot();
+      });
+
       it("var", () => {
         const ast = createTryCatch("var");
 
@@ -660,12 +723,12 @@ describe("scope", () => {
     describe("duplicate declaration", () => {
       it("should not throw error on duplicate class and function declaration", () => {
         const ast = [
-          t.classDeclaration(t.identifier("A"), t.super(), t.classBody([]), []),
+          t.classDeclaration(t.identifier("A"), null, t.classBody([]), []),
           t.functionDeclaration(t.identifier("A"), [], t.blockStatement([])),
         ];
 
         ast[0].declare = true;
-        expect(() => getPath(ast)).not.toThrowError();
+        expect(() => getPath(ast)).not.toThrow();
       });
     });
 
@@ -799,9 +862,9 @@ describe("scope", () => {
         expect(classMethod.scope.hasOwnBinding("foo")).toBe(true);
       });
       it("in static block", () => {
-        const staticBlock = getPath("(class { static { var foo; } })", {
-          plugins: ["classStaticBlock"],
-        }).get("body.0.expression.body.body.0");
+        const staticBlock = getPath("(class { static { var foo; } })").get(
+          "body.0.expression.body.body.0",
+        );
         expect(staticBlock.scope.hasOwnBinding("foo")).toBe(true);
       });
     });
@@ -887,9 +950,9 @@ describe("scope", () => {
         expect(classMethod.scope.hasOwnBinding("foo")).toBe(true);
       });
       it("in static block", () => {
-        const staticBlock = getPath("(class { static { let foo; } })", {
-          plugins: ["classStaticBlock"],
-        }).get("body.0.expression.body.body.0");
+        const staticBlock = getPath("(class { static { let foo; } })").get(
+          "body.0.expression.body.body.0",
+        );
         expect(staticBlock.scope.hasOwnBinding("foo")).toBe(true);
       });
       it("in block statement", () => {
@@ -930,10 +993,251 @@ describe("scope", () => {
       classDeclaration.scope.push({ id: t.identifier("class") });
       expect(program.toString()).toMatchInlineSnapshot(`
         "var class;
-
         class A {}"
       `);
       expect(program.scope.hasOwnBinding("class")).toBe(true);
+    });
+    it("registers the new binding outside function when the path is a param initializer", () => {
+      const program = getPath("(a = f()) => {}");
+      const assignmentPattern = program.get("body.0.expression.params.0");
+      assignmentPattern.scope.push({ id: t.identifier("ref") });
+      expect(program.toString()).toMatchInlineSnapshot(`
+        "var ref;
+        (a = f()) => {};"
+      `);
+      expect(program.scope.hasOwnBinding("ref")).toBe(true);
+    });
+    it("registers the new binding outside class method when the path is a param initializer", () => {
+      const program = getPath("class C { m(a = f()) {} }");
+      const assignmentPattern = program.get("body.0.body.body.0.params.0");
+      assignmentPattern.scope.push({ id: t.identifier("ref") });
+      expect(program.toString()).toMatchInlineSnapshot(`
+        "var ref;
+        class C {
+          m(a = f()) {}
+        }"
+      `);
+      expect(program.scope.hasOwnBinding("ref")).toBe(true);
+    });
+  });
+
+  describe("rename", () => {
+    it(".parentPath after renaming variable in switch", () => {
+      const program = getPath(`
+        switch (x) {
+          case y:
+            let a;
+        }
+      `);
+      program.traverse({
+        VariableDeclaration(path) {
+          if (path.node.declarations[0].id.name !== "a") return;
+
+          expect(path.parentPath.type).toBe("SwitchCase");
+          path.scope.rename("a");
+          expect(path.parentPath.type).toBe("SwitchCase");
+        },
+      });
+    });
+
+    it(".shorthand after renaming `ObjectProperty`", () => {
+      const program = getPath(`
+         const { a } = b;
+         ({ a } = b);
+         c = { a };
+       `);
+      program.scope.rename("a");
+
+      const renamedPropertyMatcher = expect.objectContaining({
+        type: "ObjectProperty",
+        shorthand: false,
+        ...(IS_BABEL_8()
+          ? {}
+          : {
+              // eslint-disable-next-line jest/no-conditional-expect
+              extra: expect.objectContaining({ shorthand: false }),
+            }),
+        key: expect.objectContaining({ name: "a" }),
+        value: expect.objectContaining({
+          name: expect.not.stringMatching(/^a$/),
+        }),
+      });
+
+      const { body } = program.node;
+      expect(body[0].declarations[0].id.properties[0]).toStrictEqual(
+        renamedPropertyMatcher,
+      );
+      expect(body[1].expression.left.properties[0]).toStrictEqual(
+        renamedPropertyMatcher,
+      );
+      expect(body[2].expression.right.properties[0]).toStrictEqual(
+        renamedPropertyMatcher,
+      );
+
+      expect(String(program)).toMatchInlineSnapshot(`
+        "const {
+          a: _a
+        } = b;
+        ({
+          a: _a
+        } = b);
+        c = {
+          a: _a
+        };"
+      `);
+    });
+
+    it(".shorthand after renaming `ObjectProperty` - shadowed", () => {
+      const program = getPath(`
+         const a = 1;
+         {
+          const { b } = 2;
+          ({ b } = 3);
+          (_ = { b });
+        }
+       `);
+      program.scope.rename("a", "b");
+
+      const originalPropertyMatcher = expect.objectContaining({
+        type: "ObjectProperty",
+        shorthand: true,
+        ...(IS_BABEL_8()
+          ? {}
+          : {
+              // eslint-disable-next-line jest/no-conditional-expect
+              extra: expect.objectContaining({ shorthand: true }),
+            }),
+        key: expect.objectContaining({ name: "b" }),
+        value: expect.objectContaining({ name: "b" }),
+      });
+
+      const { body } = program.node;
+      expect(body[1].body[0].declarations[0].id.properties[0]).toStrictEqual(
+        originalPropertyMatcher,
+      );
+      expect(body[1].body[1].expression.left.properties[0]).toStrictEqual(
+        originalPropertyMatcher,
+      );
+      expect(body[1].body[2].expression.right.properties[0]).toStrictEqual(
+        originalPropertyMatcher,
+      );
+
+      expect(String(program)).toMatchInlineSnapshot(`
+        "const b = 1;
+        {
+          const {
+            b
+          } = 2;
+          ({
+            b
+          } = 3);
+          _ = {
+            b
+          };
+        }"
+      `);
+    });
+
+    it(`computed key should not be renamed`, () => {
+      const program = getPath(`
+        let x = 1
+        const foo = {
+          get [x]() {
+            return x
+          },
+        }`);
+      program.traverse({
+        Function(path) {
+          const bodyPath = path.get("body");
+          // create a declaration that shadows parent variable
+          bodyPath.scope.push({
+            id: t.identifier("x"),
+            kind: "const",
+            init: t.nullLiteral(),
+          });
+          // rename the new "local" declaration
+          bodyPath.scope.rename("x", "y");
+        },
+      });
+      expect(program + "").toMatchInlineSnapshot(`
+        "let x = 1;
+        const foo = {
+          get [x]() {
+            const y = null;
+            return y;
+          }
+        };"
+      `);
+    });
+
+    it(`decorators should not be renamed`, () => {
+      const program = getPath(
+        `
+        let x;
+        class Foo {
+          @x
+          [x]() {
+            return x;
+          }
+          @x
+          #method() {
+            return x;
+          }
+        }`,
+        {
+          plugins: [["decorators"]],
+        },
+      );
+
+      program.traverse({
+        Function(path) {
+          const bodyPath = path.get("body");
+          // create a declaration that shadows parent variable
+          bodyPath.scope.push({
+            id: t.identifier("x"),
+            kind: "const",
+            init: t.nullLiteral(),
+          });
+          // rename the new "local" declaration
+          bodyPath.scope.rename("x", "y");
+        },
+      });
+      expect(program + "").toMatchInlineSnapshot(`
+        "let x;
+        class Foo {
+          @x
+          [x]() {
+            const y = null;
+            return y;
+          }
+          @x
+          #method() {
+            const y = null;
+            return y;
+          }
+        }"
+      `);
+    });
+  });
+
+  describe("constantViolations", () => {
+    it("var redeclarations should not be treated as constantViolations", () => {
+      const program = getPath(`
+        function v() { }
+        function f() {
+          var a = 1;
+          var {
+            currentPoint: a,
+            centp: v,
+          } = {};
+        }
+      `);
+
+      const bindingV = program.scope.getBinding("v");
+      expect(bindingV.constantViolations).toHaveLength(0);
+
+      const bindingA = program.get("body.1.body").scope.getBinding("a");
+      expect(bindingA.constantViolations).toHaveLength(1);
     });
   });
 });
