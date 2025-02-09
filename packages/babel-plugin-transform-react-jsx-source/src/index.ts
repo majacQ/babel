@@ -13,84 +13,75 @@
  * <sometag __source={{fileName: __jsxFileName, lineNumber: 10, columnNumber: 1}}/>
  */
 import { declare } from "@babel/helper-plugin-utils";
-import { types as t } from "@babel/core";
+import { types as t, template } from "@babel/core";
 
 const TRACE_ID = "__source";
 const FILE_NAME_VAR = "_jsxFileName";
 
-export default declare(api => {
-  api.assertVersion(7);
+const createNodeFromNullish = <T, N extends t.Node>(
+  val: T | null,
+  fn: (val: T) => N,
+): N | t.NullLiteral => (val == null ? t.nullLiteral() : fn(val));
 
-  function makeTrace(fileNameIdentifier, lineNumber, column0Based) {
-    const fileLineLiteral =
-      lineNumber != null ? t.numericLiteral(lineNumber) : t.nullLiteral();
-    const fileColumnLiteral =
-      column0Based != null
-        ? t.numericLiteral(column0Based + 1)
-        : t.nullLiteral();
-    const fileNameProperty = t.objectProperty(
-      t.identifier("fileName"),
-      fileNameIdentifier,
+type State = {
+  fileNameIdentifier: t.Identifier;
+};
+export default declare<State>(api => {
+  api.assertVersion(REQUIRED_VERSION(7));
+
+  function makeTrace(
+    fileNameIdentifier: t.Identifier,
+    { line, column }: { line: number; column: number },
+  ) {
+    const fileLineLiteral = createNodeFromNullish(line, t.numericLiteral);
+    const fileColumnLiteral = createNodeFromNullish(column, c =>
+      // c + 1 to make it 1-based instead of 0-based.
+      t.numericLiteral(c + 1),
     );
-    const lineNumberProperty = t.objectProperty(
-      t.identifier("lineNumber"),
-      fileLineLiteral,
-    );
-    const columnNumberProperty = t.objectProperty(
-      t.identifier("columnNumber"),
-      fileColumnLiteral,
-    );
-    return t.objectExpression([
-      fileNameProperty,
-      lineNumberProperty,
-      columnNumberProperty,
-    ]);
+
+    return template.expression.ast`{
+      fileName: ${fileNameIdentifier},
+      lineNumber: ${fileLineLiteral},
+      columnNumber: ${fileColumnLiteral},
+    }`;
   }
 
-  const visitor = {
-    JSXOpeningElement(path, state) {
-      const id = t.jsxIdentifier(TRACE_ID);
-      const location = path.container.openingElement.loc;
-      if (!location) {
-        // the element was generated and doesn't have location information
-        return;
-      }
-
-      const attributes = path.container.openingElement.attributes;
-      for (let i = 0; i < attributes.length; i++) {
-        const name = attributes[i].name;
-        if (name?.name === TRACE_ID) {
-          // The __source attribute already exists
-          return;
-        }
-      }
-
-      if (!state.fileNameIdentifier) {
-        const fileName = state.filename || "";
-
-        const fileNameIdentifier =
-          path.scope.generateUidIdentifier(FILE_NAME_VAR);
-        const scope = path.hub.getScope();
-        if (scope) {
-          scope.push({
-            id: fileNameIdentifier,
-            init: t.stringLiteral(fileName),
-          });
-        }
-        state.fileNameIdentifier = fileNameIdentifier;
-      }
-
-      const trace = makeTrace(
-        t.cloneNode(state.fileNameIdentifier),
-        location.start.line,
-        location.start.column,
-      );
-      attributes.push(t.jsxAttribute(id, t.jsxExpressionContainer(trace)));
-    },
-  };
+  const isSourceAttr = (attr: t.Node) =>
+    t.isJSXAttribute(attr) && attr.name.name === TRACE_ID;
 
   return {
     name: "transform-react-jsx-source",
-    visitor,
+    visitor: {
+      JSXOpeningElement(path, state) {
+        const { node } = path;
+        if (
+          // the element was generated and doesn't have location information
+          !node.loc ||
+          // Already has __source
+          path.node.attributes.some(isSourceAttr)
+        ) {
+          return;
+        }
+
+        if (!state.fileNameIdentifier) {
+          const fileNameId = path.scope.generateUidIdentifier(FILE_NAME_VAR);
+          state.fileNameIdentifier = fileNameId;
+
+          path.scope.getProgramParent().push({
+            id: fileNameId,
+            init: t.stringLiteral(state.filename || ""),
+          });
+        }
+
+        node.attributes.push(
+          t.jsxAttribute(
+            t.jsxIdentifier(TRACE_ID),
+            t.jsxExpressionContainer(
+              makeTrace(t.cloneNode(state.fileNameIdentifier), node.loc.start),
+            ),
+          ),
+        );
+      },
+    },
   };
 });

@@ -1,18 +1,20 @@
 /* @noflow */
 
-import type { NodePath } from "@babel/traverse";
+import type { NodePath } from "@babel/core";
 import wrapFunction from "@babel/helper-wrap-function";
 import annotateAsPure from "@babel/helper-annotate-as-pure";
-import {
+import { types as t } from "@babel/core";
+import { visitors } from "@babel/traverse";
+const {
   callExpression,
   cloneNode,
   isIdentifier,
   isThisExpression,
   yieldExpression,
-} from "@babel/types";
+} = t;
 
-const awaitVisitor = {
-  Function(path) {
+const awaitVisitor = visitors.environmentVisitor<{ wrapAwait: t.Expression }>({
+  ArrowFunctionExpression(path) {
     path.skip();
   },
 
@@ -27,13 +29,13 @@ const awaitVisitor = {
       ),
     );
   },
-};
+});
 
 export default function (
-  path: NodePath<any>,
+  path: NodePath<t.Function>,
   helpers: {
-    wrapAsync: any;
-    wrapAwait?: any;
+    wrapAsync: t.Expression;
+    wrapAwait?: t.Expression;
   },
   noNewArrows?: boolean,
   ignoreFunctionLength?: boolean,

@@ -1,22 +1,14 @@
-var _dec, _initProto;
-
+var _A;
+let _initProto, _methodDecs, _ref;
 const dec = () => {};
-
-_dec = deco
-
+_ref = (_methodDecs = deco, "method");
 class A extends B {
   constructor() {
     let a = 2;
-
     _initProto(super(a));
-
     foo();
   }
-
-  method() {}
-
+  [_ref]() {}
 }
-
-(() => {
-  [_initProto] = babelHelpers.applyDecs(A, [[_dec, 2, "method"]], []);
-})();
+_A = A;
+[_initProto] = babelHelpers.applyDecs(_A, [[_methodDecs, 2, "method"]], []);

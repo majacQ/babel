@@ -19,7 +19,7 @@ expect(b).toEqual(1);
 
 const arr = [c = 42] = [,];
 expect(c).toEqual(42);
-expect(arr).toEqual([,]);
+expect(arr).toStrictEqual([,]);
 
 var iterCount = 0;
 
@@ -35,7 +35,7 @@ expect(iterCount).toEqual(1);
 const [...d] = [,];
 const [...{ 0: e }] = [,];
 
-expect(d).toEqual([,]);
+expect(d).toStrictEqual([,]);
 expect(e).toEqual(undefined);
 
 const [f] = [,];
@@ -43,3 +43,20 @@ expect(f).toEqual(undefined);
 
 let [g] = [,];
 expect(g).toEqual(undefined);
+
+let thrown;
+try {
+  thrown = false;
+  [{}] = [,];
+} catch (e) {
+  thrown = true;
+}
+expect(thrown).toEqual(true);
+
+try {
+  thrown = false;
+  [[]] = [,];
+} catch (e) {
+  thrown = true;
+}
+expect(thrown).toEqual(true);

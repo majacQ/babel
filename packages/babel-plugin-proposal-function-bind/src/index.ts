@@ -1,11 +1,10 @@
 import { declare } from "@babel/helper-plugin-utils";
-import syntaxFunctionBind from "@babel/plugin-syntax-function-bind";
-import { types as t } from "@babel/core";
+import { types as t, type Scope } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
-  function getTempId(scope) {
+  function getTempId(scope: Scope) {
     let id = scope.path.getData("functionBind");
     if (id) return t.cloneNode(id);
 
@@ -13,15 +12,23 @@ export default declare(api => {
     return scope.path.setData("functionBind", id);
   }
 
-  function getStaticContext(bind, scope) {
-    const object = bind.object || bind.callee.object;
+  function getObject(bind: t.BindExpression) {
+    if (t.isExpression(bind.object)) {
+      return bind.object;
+    }
+
+    return (bind.callee as t.MemberExpression).object;
+  }
+
+  function getStaticContext(bind: t.BindExpression, scope: Scope) {
+    const object = getObject(bind);
     return (
       scope.isStatic(object) &&
       (t.isSuper(object) ? t.thisExpression() : object)
     );
   }
 
-  function inferBindContext(bind, scope) {
+  function inferBindContext(bind: t.BindExpression, scope: Scope) {
     const staticContext = getStaticContext(bind, scope);
     if (staticContext) return t.cloneNode(staticContext);
 
@@ -31,10 +38,11 @@ export default declare(api => {
         t.assignmentExpression("=", tempId, bind.object),
         bind.callee,
       ]);
-    } else {
+    } else if (t.isMemberExpression(bind.callee)) {
       bind.callee.object = t.assignmentExpression(
         "=",
         tempId,
+        // @ts-ignore(Babel 7 vs Babel 8) Fixme: support `super.foo(?)`
         bind.callee.object,
       );
     }
@@ -43,7 +51,7 @@ export default declare(api => {
 
   return {
     name: "proposal-function-bind",
-    inherits: syntaxFunctionBind,
+    manipulateOptions: (_, parser) => parser.plugins.push("functionBind"),
 
     visitor: {
       CallExpression({ node, scope }) {

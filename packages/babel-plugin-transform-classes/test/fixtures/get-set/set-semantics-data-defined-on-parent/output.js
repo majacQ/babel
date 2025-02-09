@@ -8,26 +8,19 @@ Object.defineProperty(Base.prototype, 'test', {
   writable: true,
   configurable: true
 });
-
 let Obj = /*#__PURE__*/function (_Base) {
-  babelHelpers.inherits(Obj, _Base);
-
-  var _super = babelHelpers.createSuper(Obj);
-
   function Obj() {
     babelHelpers.classCallCheck(this, Obj);
-    return _super.apply(this, arguments);
+    return babelHelpers.callSuper(this, Obj, arguments);
   }
-
-  babelHelpers.createClass(Obj, [{
+  babelHelpers.inherits(Obj, _Base);
+  return babelHelpers.createClass(Obj, [{
     key: "set",
     value: function set() {
-      return babelHelpers.set(babelHelpers.getPrototypeOf(Obj.prototype), "test", 3, this, true);
+      return babelHelpers.superPropSet(Obj, "test", 3, this, 1, 1);
     }
   }]);
-  return Obj;
 }(Base);
-
 Object.defineProperty(Obj.prototype, 'test', {
   value: 2,
   writable: true,

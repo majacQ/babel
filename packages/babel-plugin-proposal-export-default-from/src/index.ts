@@ -1,40 +1,35 @@
 import { declare } from "@babel/helper-plugin-utils";
-import syntaxExportDefaultFrom from "@babel/plugin-syntax-export-default-from";
 import { types as t } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
   return {
     name: "proposal-export-default-from",
-    inherits: syntaxExportDefaultFrom,
+    manipulateOptions: (_, parser) => parser.plugins.push("exportDefaultFrom"),
 
     visitor: {
       ExportNamedDeclaration(path) {
-        const { node, scope } = path;
-        const { specifiers } = node;
+        const { node } = path;
+        const { specifiers, source } = node;
         if (!t.isExportDefaultSpecifier(specifiers[0])) return;
 
-        const specifier = specifiers.shift();
-        const { exported } = specifier;
-        const uid = scope.generateUidIdentifier(exported.name);
+        const { exported } = specifiers.shift();
 
-        const nodes = [
-          t.importDeclaration(
-            [t.importDefaultSpecifier(uid)],
-            t.cloneNode(node.source),
-          ),
-          t.exportNamedDeclaration(null, [
-            t.exportSpecifier(t.cloneNode(uid), exported),
-          ]),
-        ];
-
-        if (specifiers.length >= 1) {
-          nodes.push(node);
+        if (specifiers.every(s => t.isExportSpecifier(s))) {
+          specifiers.unshift(
+            t.exportSpecifier(t.identifier("default"), exported),
+          );
+          return;
         }
 
-        const [importDeclaration] = path.replaceWithMultiple(nodes);
-        path.scope.registerDeclaration(importDeclaration);
+        path.insertBefore(
+          t.exportNamedDeclaration(
+            null,
+            [t.exportSpecifier(t.identifier("default"), exported)],
+            t.cloneNode(source),
+          ),
+        );
       },
     },
   };

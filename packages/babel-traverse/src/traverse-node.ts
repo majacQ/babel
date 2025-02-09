@@ -1,7 +1,7 @@
-import TraversalContext from "./context";
-import type { TraverseOptions } from "./index";
-import type NodePath from "./path";
-import type Scope from "./scope";
+import TraversalContext from "./context.ts";
+import type { ExplodedTraverseOptions } from "./index.ts";
+import type NodePath from "./path/index.ts";
+import type Scope from "./scope/index.ts";
 import type * as t from "@babel/types";
 import { VISITOR_KEYS } from "@babel/types";
 
@@ -12,25 +12,31 @@ import { VISITOR_KEYS } from "@babel/types";
  * @param {scope} scope A traversal scope used to create a new traversal context. When opts.noScope is true, scope should not be provided
  * @param {any} state A user data storage provided as the second callback argument for traversal visitors
  * @param {NodePath} path A NodePath of given node
- * @param {string[]} skipKeys A list of key names that should be skipped during traversal. The skipKeys are applied to every descendants
+ * @param {Record<string, boolean>} skipKeys A map from key names to whether that should be skipped during traversal. The skipKeys are applied to every descendants
  * @returns {boolean} Whether the traversal stops early
 
  * @note This function does not visit the given `node`.
  */
-export function traverseNode(
+export function traverseNode<S = unknown>(
   node: t.Node,
-  opts: TraverseOptions,
+  opts: ExplodedTraverseOptions<S>,
   scope?: Scope,
-  state?: any,
+  state?: S,
   path?: NodePath,
-  skipKeys?: string[],
+  skipKeys?: Record<string, boolean>,
+  visitSelf?: boolean,
 ): boolean {
   const keys = VISITOR_KEYS[node.type];
   if (!keys) return false;
 
-  const context = new TraversalContext(scope, opts, state, path);
+  const context = new TraversalContext<S>(scope, opts, state, path);
+  if (visitSelf) {
+    if (skipKeys?.[path.parentKey]) return false;
+    return context.visitQueue([path]);
+  }
+
   for (const key of keys) {
-    if (skipKeys && skipKeys[key]) continue;
+    if (skipKeys?.[key]) continue;
     if (context.visit(node, key)) {
       return true;
     }

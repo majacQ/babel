@@ -3,12 +3,22 @@ import remapAsyncToGenerator from "@babel/helper-remap-async-to-generator";
 import { addNamed } from "@babel/helper-module-imports";
 import { types as t } from "@babel/core";
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options {
+  method?: string;
+  module?: string;
+}
+
+type State = {
+  methodWrapper?: t.Identifier | t.SequenceExpression;
+};
+
+export default declare<State>((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const { method, module } = options;
-  const noNewArrows = api.assumption("noNewArrows");
-  const ignoreFunctionLength = api.assumption("ignoreFunctionLength");
+  // Todo(BABEL 8): Consider default it to false
+  const noNewArrows = api.assumption("noNewArrows") ?? true;
+  const ignoreFunctionLength = api.assumption("ignoreFunctionLength") ?? false;
 
   if (method && module) {
     return {

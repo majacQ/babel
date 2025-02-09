@@ -3,9 +3,9 @@ import helper from "@babel/helper-builder-react-jsx";
 import { types as t } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
-  function hasRefOrSpread(attrs) {
+  function hasRefOrSpread(attrs: t.JSXOpeningElement["attributes"]) {
     for (let i = 0; i < attrs.length; i++) {
       const attr = attrs[i];
       if (t.isJSXSpreadAttribute(attr)) return true;
@@ -14,7 +14,7 @@ export default declare(api => {
     return false;
   }
 
-  function isJSXAttributeOfName(attr, name) {
+  function isJSXAttributeOfName(attr: t.JSXAttribute, name: string) {
     return (
       t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: name })
     );
@@ -23,9 +23,8 @@ export default declare(api => {
   const visitor = helper({
     filter(node) {
       return (
-        // Regular JSX nodes have an `openingElement`. JSX fragments, however, don't have an
-        // `openingElement` which causes `node.openingElement.attributes` to throw.
-        node.openingElement && !hasRefOrSpread(node.openingElement.attributes)
+        node.type === "JSXElement" &&
+        !hasRefOrSpread(node.openingElement.attributes)
       );
     },
     pre(state) {
@@ -48,7 +47,7 @@ export default declare(api => {
       let hasKey = false;
       if (t.isObjectExpression(props)) {
         const keyIndex = props.properties.findIndex(prop =>
-          // @ts-expect-error todo(flow->ts) key does not exist on SpeadElement
+          // @ts-expect-error todo(flow->ts) key does not exist on SpreadElement
           t.isIdentifier(prop.key, { name: "key" }),
         );
         if (keyIndex > -1) {

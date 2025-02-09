@@ -1,6 +1,6 @@
 import type { File, types as t } from "@babel/core";
-import type { NodePath } from "@babel/traverse";
-import { hasOwnDecorators } from "./decorators";
+import type { NodePath } from "@babel/core";
+import { hasOwnDecorators } from "./decorators.ts";
 
 export const FEATURES = Object.freeze({
   //classes: 1 << 0,
@@ -12,9 +12,9 @@ export const FEATURES = Object.freeze({
 });
 
 const featuresSameLoose = new Map([
-  [FEATURES.fields, "@babel/plugin-proposal-class-properties"],
-  [FEATURES.privateMethods, "@babel/plugin-proposal-private-methods"],
-  [FEATURES.privateIn, "@babel/plugin-proposal-private-property-in-object"],
+  [FEATURES.fields, "@babel/plugin-transform-class-properties"],
+  [FEATURES.privateMethods, "@babel/plugin-transform-private-methods"],
+  [FEATURES.privateIn, "@babel/plugin-transform-private-property-in-object"],
 ]);
 
 // We can't use a symbol because this needs to always be the same, even if
@@ -27,16 +27,26 @@ const featuresSameLoose = new Map([
 const featuresKey = "@babel/plugin-class-features/featuresKey";
 const looseKey = "@babel/plugin-class-features/looseKey";
 
-// See https://github.com/babel/babel/issues/11622.
-// Since preset-env sets loose for the fields and private methods plugins, it can
-// cause conflicts with the loose mode set by an explicit plugin in the config.
-// To solve this problem, we ignore preset-env's loose mode if another plugin
-// explicitly sets it
-// The code to handle this logic doesn't check that "low priority loose" is always
-// the same. However, it is only set by the preset and not directly by users:
-// unless someone _wants_ to break it, it shouldn't be a problem.
-const looseLowPriorityKey =
-  "@babel/plugin-class-features/looseLowPriorityKey/#__internal__@babel/preset-env__please-overwrite-loose-instead-of-throwing";
+if (!process.env.BABEL_8_BREAKING) {
+  // See https://github.com/babel/babel/issues/11622.
+  // Since preset-env sets loose for the fields and private methods plugins, it can
+  // cause conflicts with the loose mode set by an explicit plugin in the config.
+  // To solve this problem, we ignore preset-env's loose mode if another plugin
+  // explicitly sets it
+  // The code to handle this logic doesn't check that "low priority loose" is always
+  // the same. However, it is only set by the preset and not directly by users:
+  // unless someone _wants_ to break it, it shouldn't be a problem.
+  // eslint-disable-next-line no-var
+  var looseLowPriorityKey =
+    "@babel/plugin-class-features/looseLowPriorityKey/#__internal__@babel/preset-env__please-overwrite-loose-instead-of-throwing";
+}
+
+if (!process.env.BABEL_8_BREAKING) {
+  // eslint-disable-next-line no-var
+  var canIgnoreLoose = function (file: File, feature: number) {
+    return !!(file.get(looseLowPriorityKey) & feature);
+  };
+}
 
 export function enableFeature(file: File, feature: number, loose: boolean) {
   // We can't blindly enable the feature because, if it was already set,
@@ -45,17 +55,22 @@ export function enableFeature(file: File, feature: number, loose: boolean) {
   //   @babel/plugin-class-properties { loose: false }
   // is transformed in loose mode.
   // We only enabled the feature if it was previously disabled.
-  if (!hasFeature(file, feature) || canIgnoreLoose(file, feature)) {
+  if (process.env.BABEL_8_BREAKING) {
+    if (!hasFeature(file, feature)) {
+      file.set(featuresKey, file.get(featuresKey) | feature);
+      setLoose(file, feature, loose);
+    }
+  } else if (!hasFeature(file, feature) || canIgnoreLoose(file, feature)) {
     file.set(featuresKey, file.get(featuresKey) | feature);
     if (
-      // @ts-expect-error
+      // @ts-expect-error comparing loose with internal private magic string
       loose ===
       "#__internal__@babel/preset-env__prefer-true-but-false-is-ok-if-it-prevents-an-error"
     ) {
       setLoose(file, feature, true);
       file.set(looseLowPriorityKey, file.get(looseLowPriorityKey) | feature);
     } else if (
-      // @ts-expect-error
+      // @ts-expect-error comparing loose with internal private magic string
       loose ===
       "#__internal__@babel/preset-env__prefer-false-but-true-is-ok-if-it-prevents-an-error"
     ) {
@@ -67,28 +82,33 @@ export function enableFeature(file: File, feature: number, loose: boolean) {
   }
 
   let resolvedLoose: boolean | undefined;
-  let higherPriorityPluginName: string | undefined;
-
   for (const [mask, name] of featuresSameLoose) {
     if (!hasFeature(file, mask)) continue;
+    if (!process.env.BABEL_8_BREAKING) {
+      if (canIgnoreLoose(file, mask)) continue;
+    }
 
     const loose = isLoose(file, mask);
 
-    if (canIgnoreLoose(file, mask)) {
-      continue;
-    } else if (resolvedLoose === !loose) {
+    if (resolvedLoose === !loose) {
       throw new Error(
-        "'loose' mode configuration must be the same for @babel/plugin-proposal-class-properties, " +
-          "@babel/plugin-proposal-private-methods and " +
-          "@babel/plugin-proposal-private-property-in-object (when they are enabled).",
+        "'loose' mode configuration must be the same for @babel/plugin-transform-class-properties, " +
+          "@babel/plugin-transform-private-methods and " +
+          "@babel/plugin-transform-private-property-in-object (when they are enabled)." +
+          "\n\n" +
+          getBabelShowConfigForHint(file),
       );
     } else {
       resolvedLoose = loose;
-      higherPriorityPluginName = name;
+
+      if (!process.env.BABEL_8_BREAKING) {
+        // eslint-disable-next-line no-var
+        var higherPriorityPluginName = name;
+      }
     }
   }
 
-  if (resolvedLoose !== undefined) {
+  if (!process.env.BABEL_8_BREAKING && resolvedLoose !== undefined) {
     for (const [mask, name] of featuresSameLoose) {
       if (hasFeature(file, mask) && isLoose(file, mask) !== resolvedLoose) {
         setLoose(file, mask, resolvedLoose);
@@ -96,15 +116,31 @@ export function enableFeature(file: File, feature: number, loose: boolean) {
           `Though the "loose" option was set to "${!resolvedLoose}" in your @babel/preset-env ` +
             `config, it will not be used for ${name} since the "loose" mode option was set to ` +
             `"${resolvedLoose}" for ${higherPriorityPluginName}.\nThe "loose" option must be the ` +
-            `same for @babel/plugin-proposal-class-properties, @babel/plugin-proposal-private-methods ` +
-            `and @babel/plugin-proposal-private-property-in-object (when they are enabled): you can ` +
+            `same for @babel/plugin-transform-class-properties, @babel/plugin-transform-private-methods ` +
+            `and @babel/plugin-transform-private-property-in-object (when they are enabled): you can ` +
             `silence this warning by explicitly adding\n` +
             `\t["${name}", { "loose": ${resolvedLoose} }]\n` +
-            `to the "plugins" section of your Babel config.`,
+            `to the "plugins" section of your Babel config.` +
+            "\n\n" +
+            getBabelShowConfigForHint(file),
         );
       }
     }
   }
+}
+
+function getBabelShowConfigForHint(file: File) {
+  let { filename } = file.opts;
+  if (!filename || filename === "unknown") {
+    filename = "[name of the input file]";
+  }
+  return `\
+If you already set the same 'loose' mode for these plugins in your config, it's possible that they \
+are enabled multiple times with different options.
+You can re-run Babel with the BABEL_SHOW_CONFIG_FOR environment variable to show the loaded \
+configuration:
+\tnpx cross-env BABEL_SHOW_CONFIG_FOR=${filename} <your build command>
+See https://babeljs.io/docs/configuration#print-effective-configs for more info.`;
 }
 
 function hasFeature(file: File, feature: number) {
@@ -119,11 +155,9 @@ function setLoose(file: File, feature: number, loose: boolean) {
   if (loose) file.set(looseKey, file.get(looseKey) | feature);
   else file.set(looseKey, file.get(looseKey) & ~feature);
 
-  file.set(looseLowPriorityKey, file.get(looseLowPriorityKey) & ~feature);
-}
-
-function canIgnoreLoose(file: File, feature: number) {
-  return !!(file.get(looseLowPriorityKey) & feature);
+  if (!process.env.BABEL_8_BREAKING) {
+    file.set(looseLowPriorityKey, file.get(looseLowPriorityKey) & ~feature);
+  }
 }
 
 export function shouldTransform(path: NodePath<t.Class>, file: File): boolean {
@@ -170,18 +204,18 @@ export function shouldTransform(path: NodePath<t.Class>, file: File): boolean {
     throw path.buildCodeFrameError(
       "Decorators are not enabled." +
         "\nIf you are using " +
-        '["@babel/plugin-proposal-decorators", { "legacy": true }], ' +
-        'make sure it comes *before* "@babel/plugin-proposal-class-properties" ' +
+        '["@babel/plugin-proposal-decorators", { "version": "legacy" }], ' +
+        'make sure it comes *before* "@babel/plugin-transform-class-properties" ' +
         "and enable loose mode, like so:\n" +
-        '\t["@babel/plugin-proposal-decorators", { "legacy": true }]\n' +
-        '\t["@babel/plugin-proposal-class-properties", { "loose": true }]',
+        '\t["@babel/plugin-proposal-decorators", { "version": "legacy" }]\n' +
+        '\t["@babel/plugin-transform-class-properties", { "loose": true }]',
     );
   }
 
   if (privateMethodPath && !hasFeature(file, FEATURES.privateMethods)) {
     throw privateMethodPath.buildCodeFrameError(
       "Class private methods are not enabled. " +
-        "Please add `@babel/plugin-proposal-private-method` to your configuration.",
+        "Please add `@babel/plugin-transform-private-methods` to your configuration.",
     );
   }
 
@@ -197,14 +231,14 @@ export function shouldTransform(path: NodePath<t.Class>, file: File): boolean {
   ) {
     throw path.buildCodeFrameError(
       "Class fields are not enabled. " +
-        "Please add `@babel/plugin-proposal-class-properties` to your configuration.",
+        "Please add `@babel/plugin-transform-class-properties` to your configuration.",
     );
   }
 
   if (staticBlockPath && !hasFeature(file, FEATURES.staticBlocks)) {
     throw path.buildCodeFrameError(
       "Static class blocks are not enabled. " +
-        "Please add `@babel/plugin-proposal-class-static-block` to your configuration.",
+        "Please add `@babel/plugin-transform-class-static-block` to your configuration.",
     );
   }
 

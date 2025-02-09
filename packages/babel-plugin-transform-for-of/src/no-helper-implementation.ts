@@ -1,10 +1,21 @@
+if (process.env.BABEL_8_BREAKING && process.env.IS_PUBLISH) {
+  throw new Error(
+    "Internal Babel error: This file should only be loaded in Babel 7",
+  );
+}
+
 import { template, types as t } from "@babel/core";
+import type { PluginPass, NodePath } from "@babel/core";
 
 // This is the legacy implementation, which inlines all the code.
 // It must be kept for compatibility reasons.
-// TODO (Babel 8): Remove this code.
+// TODO(Babel 8): Remove this file.
 
-export default function transformWithoutHelper(loose, path, state) {
+export default function transformWithoutHelper(
+  loose: boolean | void,
+  path: NodePath<t.ForOfStatement>,
+  state: PluginPass,
+) {
   const pushComputedProps = loose
     ? pushComputedPropsLoose
     : pushComputedPropsSpec;
@@ -13,7 +24,7 @@ export default function transformWithoutHelper(loose, path, state) {
   const build = pushComputedProps(path, state);
   const declar = build.declar;
   const loop = build.loop;
-  const block = loop.body;
+  const block = loop.body as t.BlockStatement;
 
   // ensure that it's a block so we can take all its statements
   path.ensureBlock();
@@ -24,7 +35,7 @@ export default function transformWithoutHelper(loose, path, state) {
   }
 
   // push the rest of the original loop body onto our new body
-  block.body.push(...node.body.body);
+  block.body.push(...(node.body as t.BlockStatement).body);
 
   t.inherits(loop, node);
   t.inherits(loop.body, node.body);
@@ -37,7 +48,7 @@ export default function transformWithoutHelper(loose, path, state) {
   }
 }
 
-const buildForOfLoose = template(`
+const buildForOfLoose = template.statement(`
   for (var LOOP_OBJECT = OBJECT,
           IS_ARRAY = Array.isArray(LOOP_OBJECT),
           INDEX = 0,
@@ -54,7 +65,7 @@ const buildForOfLoose = template(`
   }
 `);
 
-const buildForOf = template(`
+const buildForOf = template.statements(`
   var ITERATOR_COMPLETION = true;
   var ITERATOR_HAD_ERROR_KEY = false;
   var ITERATOR_ERROR_KEY = undefined;
@@ -80,7 +91,10 @@ const buildForOf = template(`
   }
 `);
 
-function pushComputedPropsLoose(path, file) {
+function pushComputedPropsLoose(
+  path: NodePath<t.ForOfStatement>,
+  state: PluginPass,
+) {
   const { node, scope, parent } = path;
   const { left } = node;
   let declar, id, intermediate;
@@ -99,7 +113,7 @@ function pushComputedPropsLoose(path, file) {
       t.variableDeclarator(t.identifier(id.name)),
     ]);
   } else {
-    throw file.buildCodeFrameError(
+    throw state.buildCodeFrameError(
       left,
       `Unknown node type ${left.type} in ForStatement`,
     );
@@ -115,7 +129,7 @@ function pushComputedPropsLoose(path, file) {
     INDEX: scope.generateUidIdentifier("i"),
     ID: id,
     INTERMEDIATE: intermediate,
-  }) as t.Statement;
+  }) as t.ForStatement;
 
   //
   const isLabeledParent = t.isLabeledStatement(parent);
@@ -133,7 +147,10 @@ function pushComputedPropsLoose(path, file) {
   };
 }
 
-function pushComputedPropsSpec(path, file) {
+function pushComputedPropsSpec(
+  path: NodePath<t.ForOfStatement>,
+  state: PluginPass,
+) {
   const { node, scope, parent } = path;
   const left = node.left;
   let declar;
@@ -155,7 +172,7 @@ function pushComputedPropsSpec(path, file) {
       t.variableDeclarator(left.declarations[0].id, stepValue),
     ]);
   } else {
-    throw file.buildCodeFrameError(
+    throw state.buildCodeFrameError(
       left,
       `Unknown node type ${left.type} in ForStatement`,
     );
@@ -174,8 +191,8 @@ function pushComputedPropsSpec(path, file) {
 
   const isLabeledParent = t.isLabeledStatement(parent);
 
-  const tryBody = template[3].block.body;
-  const loop = tryBody[0];
+  const tryBody = (template[3] as t.TryStatement).block.body;
+  const loop = tryBody[0] as t.ForStatement;
 
   if (isLabeledParent) {
     tryBody[0] = t.labeledStatement(parent.label, loop);

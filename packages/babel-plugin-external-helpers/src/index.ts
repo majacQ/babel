@@ -1,8 +1,13 @@
 import { declare } from "@babel/helper-plugin-utils";
 import { types as t } from "@babel/core";
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options {
+  helperVersion?: string;
+  whitelist?: false | string[];
+}
+
+export default declare((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const { helperVersion = "7.0.0-beta.0", whitelist = false } = options;
 
@@ -20,7 +25,7 @@ export default declare((api, options) => {
   return {
     name: "external-helpers",
     pre(file) {
-      file.set("helperGenerator", name => {
+      file.set("helperGenerator", (name: string) => {
         // If the helper didn't exist yet at the version given, we bail
         // out and let Babel either insert it directly, or throw an error
         // so that plugins can handle that case properly.

@@ -1,35 +1,37 @@
 import { declare } from "@babel/helper-plugin-utils";
-import * as defineMap from "@babel/helper-define-map";
+import { type MutatorMap, pushAccessor, toDefineObject } from "./define-map.ts";
 import { types as t } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
   return {
     name: "transform-property-mutators",
 
     visitor: {
-      ObjectExpression(path, file) {
+      ObjectExpression(path) {
         const { node } = path;
-        let hasAny = false;
-        for (const prop of node.properties) {
-          if (prop.kind === "get" || prop.kind === "set") {
-            hasAny = true;
-            break;
-          }
-        }
-        if (!hasAny) return;
-
-        const mutatorMap = {};
-
-        node.properties = node.properties.filter(function (prop) {
-          if (!prop.computed && (prop.kind === "get" || prop.kind === "set")) {
-            defineMap.push(mutatorMap, prop, null, file);
+        let mutatorMap: MutatorMap | undefined;
+        const newProperties = node.properties.filter(function (prop) {
+          if (
+            t.isObjectMethod(prop) &&
+            !prop.computed &&
+            (prop.kind === "get" || prop.kind === "set")
+          ) {
+            pushAccessor(
+              (mutatorMap ??= {}),
+              prop as t.ObjectMethod & { kind: "get" | "set"; computed: false },
+            );
             return false;
-          } else {
-            return true;
           }
+          return true;
         });
+
+        if (mutatorMap === undefined) {
+          return;
+        }
+
+        node.properties = newProperties;
 
         path.replaceWith(
           t.callExpression(
@@ -37,7 +39,7 @@ export default declare(api => {
               t.identifier("Object"),
               t.identifier("defineProperties"),
             ),
-            [node, defineMap.toDefineObject(mutatorMap)],
+            [node, toDefineObject(mutatorMap)],
           ),
         );
       },

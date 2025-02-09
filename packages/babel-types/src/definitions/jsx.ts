@@ -2,9 +2,8 @@ import {
   defineAliasedType,
   assertNodeType,
   assertValueType,
-  chain,
-  assertEach,
-} from "./utils";
+  validateArrayOfType,
+} from "./utils.ts";
 
 const defineType = defineAliasedType("JSX");
 
@@ -42,7 +41,9 @@ defineType("JSXClosingElement", {
 });
 
 defineType("JSXElement", {
-  builder: ["openingElement", "closingElement", "children", "selfClosing"],
+  builder: process.env.BABEL_8_BREAKING
+    ? ["openingElement", "closingElement", "children"]
+    : ["openingElement", "closingElement", "children", "selfClosing"],
   visitor: ["openingElement", "children", "closingElement"],
   aliases: ["Immutable", "Expression"],
   fields: {
@@ -53,24 +54,21 @@ defineType("JSXElement", {
       optional: true,
       validate: assertNodeType("JSXClosingElement"),
     },
-    children: {
-      validate: chain(
-        assertValueType("array"),
-        assertEach(
-          assertNodeType(
-            "JSXText",
-            "JSXExpressionContainer",
-            "JSXSpreadChild",
-            "JSXElement",
-            "JSXFragment",
-          ),
-        ),
-      ),
-    },
-    selfClosing: {
-      validate: assertValueType("boolean"),
-      optional: true,
-    },
+    children: validateArrayOfType(
+      "JSXText",
+      "JSXExpressionContainer",
+      "JSXSpreadChild",
+      "JSXElement",
+      "JSXFragment",
+    ),
+    ...(process.env.BABEL_8_BREAKING
+      ? {}
+      : {
+          selfClosing: {
+            validate: assertValueType("boolean"),
+            optional: true,
+          },
+        }),
   },
 });
 
@@ -131,7 +129,9 @@ defineType("JSXNamespacedName", {
 
 defineType("JSXOpeningElement", {
   builder: ["name", "attributes", "selfClosing"],
-  visitor: ["name", "attributes"],
+  visitor: process.env.BABEL_8_BREAKING
+    ? ["name", "typeArguments", "attributes"]
+    : ["name", "typeParameters", "typeArguments", "attributes"],
   aliases: ["Immutable"],
   fields: {
     name: {
@@ -144,19 +144,24 @@ defineType("JSXOpeningElement", {
     selfClosing: {
       default: false,
     },
-    attributes: {
-      validate: chain(
-        assertValueType("array"),
-        assertEach(assertNodeType("JSXAttribute", "JSXSpreadAttribute")),
-      ),
-    },
-    typeParameters: {
-      validate: assertNodeType(
-        "TypeParameterInstantiation",
-        "TSTypeParameterInstantiation",
-      ),
+    attributes: validateArrayOfType("JSXAttribute", "JSXSpreadAttribute"),
+    typeArguments: {
+      validate: process.env.BABEL_8_BREAKING
+        ? assertNodeType(
+            "TypeParameterInstantiation",
+            "TSTypeParameterInstantiation",
+          )
+        : assertNodeType("TypeParameterInstantiation"),
       optional: true,
     },
+    ...(process.env.BABEL_8_BREAKING
+      ? {}
+      : {
+          typeParameters: {
+            validate: assertNodeType("TSTypeParameterInstantiation"),
+            optional: true,
+          },
+        }),
   },
 });
 
@@ -190,20 +195,13 @@ defineType("JSXFragment", {
     closingFragment: {
       validate: assertNodeType("JSXClosingFragment"),
     },
-    children: {
-      validate: chain(
-        assertValueType("array"),
-        assertEach(
-          assertNodeType(
-            "JSXText",
-            "JSXExpressionContainer",
-            "JSXSpreadChild",
-            "JSXElement",
-            "JSXFragment",
-          ),
-        ),
-      ),
-    },
+    children: validateArrayOfType(
+      "JSXText",
+      "JSXExpressionContainer",
+      "JSXSpreadChild",
+      "JSXElement",
+      "JSXFragment",
+    ),
   },
 });
 

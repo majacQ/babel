@@ -1,9 +1,8 @@
 import { declare } from "@babel/helper-plugin-utils";
-import syntaxPartialApplication from "@babel/plugin-syntax-partial-application";
-import { types as t } from "@babel/core";
+import { types as t, type Scope } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
   /**
    * a function to figure out if a call expression has
@@ -11,61 +10,65 @@ export default declare(api => {
    * @param node a callExpression node
    * @returns boolean
    */
-  function hasArgumentPlaceholder(node) {
+  function hasArgumentPlaceholder(node: t.CallExpression) {
     return node.arguments.some(arg => t.isArgumentPlaceholder(arg));
   }
 
-  function unwrapArguments(node, scope) {
-    const init = [];
-    for (let i = 0; i < node.arguments.length; i++) {
-      if (
-        !t.isArgumentPlaceholder(node.arguments[i]) &&
-        !t.isImmutable(node.arguments[i])
-      ) {
-        const id = scope.generateUidIdentifierBasedOnNode(
-          node.arguments[i],
-          "param",
-        );
+  function unwrapArguments(
+    { arguments: args }: t.CallExpression,
+    scope: Scope,
+  ) {
+    const init: t.AssignmentExpression[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const node = args[i];
+      if (!t.isArgumentPlaceholder(node) && !t.isImmutable(node)) {
+        const id = scope.generateUidIdentifierBasedOnNode(node, "param");
         scope.push({ id });
-        if (t.isSpreadElement(node.arguments[i])) {
+        if (t.isSpreadElement(node)) {
           init.push(
             t.assignmentExpression(
               "=",
               t.cloneNode(id),
-              t.arrayExpression([t.spreadElement(node.arguments[i].argument)]),
+              t.arrayExpression([t.spreadElement(node.argument)]),
             ),
           );
-          node.arguments[i].argument = t.cloneNode(id);
+          node.argument = t.cloneNode(id);
         } else {
-          init.push(
-            t.assignmentExpression("=", t.cloneNode(id), node.arguments[i]),
-          );
-          node.arguments[i] = t.cloneNode(id);
+          init.push(t.assignmentExpression("=", t.cloneNode(id), node));
+          args[i] = t.cloneNode(id);
         }
       }
     }
     return init;
   }
 
-  function replacePlaceholders(node, scope) {
-    const placeholders = [];
-    const args = [];
+  type CallArgsWithoutPlaceholder = Exclude<
+    t.CallExpression["arguments"][number],
+    t.ArgumentPlaceholder
+  >[];
+
+  function replacePlaceholders(
+    node: t.CallExpression,
+    scope: Scope,
+  ): [t.Identifier[], CallArgsWithoutPlaceholder] {
+    const placeholders: t.Identifier[] = [];
+    const newArgs: CallArgsWithoutPlaceholder = [];
 
     node.arguments.forEach(arg => {
       if (t.isArgumentPlaceholder(arg)) {
         const id = scope.generateUid("_argPlaceholder");
         placeholders.push(t.identifier(id));
-        args.push(t.identifier(id));
+        newArgs.push(t.identifier(id));
       } else {
-        args.push(arg);
+        newArgs.push(arg);
       }
     });
-    return [placeholders, args];
+    return [placeholders, newArgs];
   }
 
   return {
     name: "proposal-partial-application",
-    inherits: syntaxPartialApplication,
+    manipulateOptions: (_, parser) => parser.plugins.push("partialApplication"),
 
     visitor: {
       CallExpression(path) {
@@ -83,27 +86,28 @@ export default declare(api => {
         scope.push({ id: functionLVal });
 
         if (node.callee.type === "MemberExpression") {
-          const receiverLVal = path.scope.generateUidIdentifierBasedOnNode(
-            node.callee.object,
-          );
+          const { object: receiver, property } = node.callee;
+          const receiverLVal =
+            path.scope.generateUidIdentifierBasedOnNode(receiver);
           scope.push({ id: receiverLVal });
+
           sequenceParts.push(
             t.assignmentExpression(
               "=",
               t.cloneNode(receiverLVal),
-              node.callee.object,
+              // @ts-ignore(Babel 7 vs Babel 8) Fixme: support `super.foo(?)`
+              receiver,
             ),
             t.assignmentExpression(
               "=",
               t.cloneNode(functionLVal),
-              t.memberExpression(
-                t.cloneNode(receiverLVal),
-                node.callee.property,
-              ),
+              t.memberExpression(t.cloneNode(receiverLVal), property),
             ),
             ...argsInitializers,
             t.functionExpression(
-              t.cloneNode(node.callee.property),
+              t.isIdentifier(property)
+                ? t.cloneNode(property)
+                : path.scope.generateUidIdentifierBasedOnNode(property),
               placeholdersParams,
               t.blockStatement(
                 [
@@ -125,10 +129,17 @@ export default declare(api => {
           );
         } else {
           sequenceParts.push(
-            t.assignmentExpression("=", t.cloneNode(functionLVal), node.callee),
+            t.assignmentExpression(
+              "=",
+              t.cloneNode(functionLVal),
+              // @ts-expect-error V8 intrinsics will not support partial application
+              node.callee,
+            ),
             ...argsInitializers,
             t.functionExpression(
-              t.cloneNode(node.callee),
+              t.isIdentifier(node.callee)
+                ? t.cloneNode(node.callee)
+                : path.scope.generateUidIdentifierBasedOnNode(node.callee),
               placeholdersParams,
               t.blockStatement(
                 [

@@ -20,7 +20,7 @@ export default function normalizeOptions(options: any = {}) {
 \`useBuiltIns: ${useBuiltInsFormatted}\`, you can use the following config
 {
   "plugins": [
-    ["@babel/plugin-proposal-object-rest-spread", { "loose": true, "useBuiltIns": ${useBuiltInsFormatted} }]
+    ["@babel/plugin-transform-object-rest-spread", { "loose": true, "useBuiltIns": ${useBuiltInsFormatted} }]
   ],
   "presets": ["@babel/preset-react"]
 }`,
@@ -40,7 +40,6 @@ export default function normalizeOptions(options: any = {}) {
     const development = v.validateBooleanOption(
       TopLevelOptions.development,
       options.development,
-      false,
     );
     let importSource = v.validateStringOption(
       TopLevelOptions.importSource,
@@ -103,7 +102,8 @@ export default function normalizeOptions(options: any = {}) {
       pragmaFrag = pragmaFrag || "React.Fragment";
     }
 
-    const development = !!options.development;
+    const development =
+      options.development == null ? undefined : !!options.development;
 
     return {
       development,

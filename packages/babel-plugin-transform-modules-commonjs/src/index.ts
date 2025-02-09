@@ -2,30 +2,48 @@ import { declare } from "@babel/helper-plugin-utils";
 import {
   isModule,
   rewriteModuleStatementsAndPrepareHeader,
+  type RewriteModuleStatementsAndPrepareHeaderOptions,
   isSideEffectImport,
   buildNamespaceInitStatements,
   ensureStatementsHoisted,
   wrapInterop,
   getModuleName,
 } from "@babel/helper-module-transforms";
-import simplifyAccess from "@babel/helper-simple-access";
 import { template, types as t } from "@babel/core";
+import type { PluginPass, Visitor, Scope, NodePath } from "@babel/core";
+import type { PluginOptions } from "@babel/helper-module-transforms";
 
-import { createDynamicImportTransform } from "babel-plugin-dynamic-import-node/utils";
+import { transformDynamicImport } from "./dynamic-import.ts";
+import { lazyImportsHook } from "./lazy.ts";
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+import { defineCommonJSHook, makeInvokers } from "./hooks.ts";
+export { defineCommonJSHook };
 
-  const transformImportCall = createDynamicImportTransform(api);
+export interface Options extends PluginOptions {
+  allowCommonJSExports?: boolean;
+  allowTopLevelThis?: boolean;
+  importInterop?: RewriteModuleStatementsAndPrepareHeaderOptions["importInterop"];
+  lazy?: RewriteModuleStatementsAndPrepareHeaderOptions["lazy"];
+  loose?: boolean;
+  mjsStrictNamespace?: boolean;
+  noInterop?: boolean;
+  strict?: boolean;
+  strictMode?: boolean;
+  strictNamespace?: boolean;
+}
+
+export default declare((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   const {
-    // 'true' for non-mjs files to strictly have .default, instead of having
-    // destructuring-like behavior for their properties.
+    // 'true' for imports to strictly have .default, instead of having
+    // destructuring-like behavior for their properties. This matches the behavior
+    // of the initial Node.js (v12) behavior when importing a CommonJS without
+    // the __esMoule property.
+    // .strictNamespace is for non-mjs files, mjsStrictNamespace if for mjs files.
     strictNamespace = false,
+    mjsStrictNamespace = strictNamespace,
 
-    // 'true' for mjs files to strictly have .default, instead of having
-    // destructuring-like behavior for their properties.
-    mjsStrictNamespace = true,
     allowTopLevelThis,
     strict,
     strictMode,
@@ -34,12 +52,11 @@ export default declare((api, options) => {
     lazy = false,
     // Defaulting to 'true' for now. May change before 7.x major.
     allowCommonJSExports = true,
+    loose = false,
   } = options;
 
-  const constantReexports =
-    api.assumption("constantReexports") ?? options.loose;
-  const enumerableModuleMeta =
-    api.assumption("enumerableModuleMeta") ?? options.loose;
+  const constantReexports = api.assumption("constantReexports") ?? loose;
+  const enumerableModuleMeta = api.assumption("enumerableModuleMeta") ?? loose;
   const noIncompleteNsImportDetection =
     api.assumption("noIncompleteNsImportDetection") ?? false;
 
@@ -58,7 +75,7 @@ export default declare((api, options) => {
     throw new Error(`.mjsStrictNamespace must be a boolean, or undefined`);
   }
 
-  const getAssertion = localName => template.expression.ast`
+  const getAssertion = (localName: string) => template.expression.ast`
     (function(){
       throw new Error(
         "The CommonJS '" + "${localName}" + "' variable is not available in ES6 modules." +
@@ -67,7 +84,7 @@ export default declare((api, options) => {
     })()
   `;
 
-  const moduleExportsVisitor = {
+  const moduleExportsVisitor: Visitor<{ scope: Scope }> = {
     ReferencedIdentifier(path) {
       const localName = path.node.name;
       if (localName !== "module" && localName !== "exports") return;
@@ -89,10 +106,32 @@ export default declare((api, options) => {
       path.replaceWith(getAssertion(localName));
     },
 
+    UpdateExpression(path) {
+      const arg = path.get("argument");
+      if (!arg.isIdentifier()) return;
+      const localName = arg.node.name;
+      if (localName !== "module" && localName !== "exports") return;
+
+      const localBinding = path.scope.getBinding(localName);
+      const rootBinding = this.scope.getBinding(localName);
+
+      // redeclared in this scope
+      if (rootBinding !== localBinding) return;
+
+      path.replaceWith(
+        t.assignmentExpression(
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+          (path.node.operator[0] + "=") as t.AssignmentExpression["operator"],
+          arg.node,
+          getAssertion(localName),
+        ),
+      );
+    },
+
     AssignmentExpression(path) {
       const left = path.get("left");
       if (left.isIdentifier()) {
-        const localName = path.node.name;
+        const localName = left.node.name;
         if (localName !== "module" && localName !== "exports") return;
 
         const localBinding = path.scope.getBinding(localName);
@@ -107,14 +146,14 @@ export default declare((api, options) => {
         );
       } else if (left.isPattern()) {
         const ids = left.getOuterBindingIdentifiers();
-        const localName = Object.keys(ids).filter(localName => {
+        const localName = Object.keys(ids).find(localName => {
           if (localName !== "module" && localName !== "exports") return false;
 
           return (
             this.scope.getBinding(localName) ===
             path.scope.getBinding(localName)
           );
-        })[0];
+        });
 
         if (localName) {
           const right = path.get("right");
@@ -131,19 +170,25 @@ export default declare((api, options) => {
 
     pre() {
       this.file.set("@babel/plugin-transform-modules-*", "commonjs");
+
+      if (lazy) defineCommonJSHook(this.file, lazyImportsHook(lazy));
     },
 
     visitor: {
-      CallExpression(path) {
+      ["CallExpression" +
+        (api.types.importExpression ? "|ImportExpression" : "")](
+        this: PluginPass,
+        path: NodePath<t.CallExpression | t.ImportExpression>,
+      ) {
         if (!this.file.has("@babel/plugin-proposal-dynamic-import")) return;
-        if (!path.get("callee").isImport()) return;
+        if (path.isCallExpression() && !t.isImport(path.node.callee)) return;
 
         let { scope } = path;
         do {
           scope.rename("require");
         } while ((scope = scope.parent));
 
-        transformImportCall(this, path.get("callee"));
+        transformDynamicImport(path, noInterop, this.file);
       },
 
       Program: {
@@ -162,7 +207,6 @@ export default declare((api, options) => {
           // These objects are specific to CommonJS and are not available in
           // real ES6 implementations.
           if (!allowCommonJSExports) {
-            simplifyAccess(path, new Set(["module", "exports"]));
             path.traverse(moduleExportsVisitor, {
               scope: path.scope,
             });
@@ -171,6 +215,8 @@ export default declare((api, options) => {
           let moduleName = getModuleName(this.file.opts, options);
           // @ts-expect-error todo(flow->ts): do not reuse variables
           if (moduleName) moduleName = t.stringLiteral(moduleName);
+
+          const hooks = makeInvokers(this.file);
 
           const { meta, headers } = rewriteModuleStatementsAndPrepareHeader(
             path,
@@ -183,13 +229,15 @@ export default declare((api, options) => {
               allowTopLevelThis,
               noInterop,
               importInterop,
-              lazy,
+              wrapReference: hooks.wrapReference,
+              getWrapperPayload: hooks.getWrapperPayload,
               esNamespaceOnly:
                 typeof state.filename === "string" &&
                 /\.mjs$/.test(state.filename)
                   ? mjsStrictNamespace
                   : strictNamespace,
               noIncompleteNsImportDetection,
+              filename: this.file.opts.filename,
             },
           );
 
@@ -198,28 +246,30 @@ export default declare((api, options) => {
               t.stringLiteral(source),
             ]);
 
-            let header;
+            let header: t.Statement;
             if (isSideEffectImport(metadata)) {
-              if (metadata.lazy) throw new Error("Assertion failure");
+              if (lazy && metadata.wrap === "function") {
+                throw new Error("Assertion failure");
+              }
 
               header = t.expressionStatement(loadExpr);
             } else {
               const init =
                 wrapInterop(path, loadExpr, metadata.interop) || loadExpr;
 
-              if (metadata.lazy) {
-                header = template.ast`
-                  function ${metadata.name}() {
-                    const data = ${init};
-                    ${metadata.name} = function(){ return data; };
-                    return data;
-                  }
-                `;
-              } else {
-                header = template.ast`
-                  var ${metadata.name} = ${init};
-                `;
+              if (metadata.wrap) {
+                const res = hooks.buildRequireWrapper(
+                  metadata.name,
+                  init,
+                  metadata.wrap,
+                  metadata.referenced,
+                );
+                if (res === false) continue;
+                else header = res;
               }
+              header ??= template.statement.ast`
+                var ${metadata.name} = ${init};
+              `;
             }
             header.loc = metadata.loc;
 
@@ -229,6 +279,7 @@ export default declare((api, options) => {
                 meta,
                 metadata,
                 constantReexports,
+                hooks.wrapReference,
               ),
             );
           }
@@ -236,7 +287,7 @@ export default declare((api, options) => {
           ensureStatementsHoisted(headers);
           path.unshiftContainer("body", headers);
           path.get("body").forEach(path => {
-            if (headers.indexOf(path.node) === -1) return;
+            if (!headers.includes(path.node)) return;
             if (path.isVariableDeclaration()) {
               path.scope.registerDeclaration(path);
             }

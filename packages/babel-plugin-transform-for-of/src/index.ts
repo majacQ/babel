@@ -1,10 +1,39 @@
 import { declare } from "@babel/helper-plugin-utils";
-import { template, types as t } from "@babel/core";
+import { template, types as t, type NodePath } from "@babel/core";
 
-import transformWithoutHelper from "./no-helper-implementation";
+import transformWithoutHelper from "./no-helper-implementation.ts" with { if: "!process.env.BABEL_8_BREAKING" };
+import { skipTransparentExprWrapperNodes } from "@babel/helper-skip-transparent-expression-wrappers";
 
-export default declare((api, options) => {
-  api.assertVersion(7);
+export interface Options {
+  allowArrayLike?: boolean;
+  assumeArray?: boolean;
+  loose?: boolean;
+}
+
+function buildLoopBody(
+  path: NodePath<t.ForXStatement>,
+  declar: t.Statement,
+  newBody?: t.Statement | t.Expression,
+) {
+  let block;
+  const bodyPath = path.get("body");
+  const body = newBody ?? bodyPath.node;
+  if (
+    t.isBlockStatement(body) &&
+    Object.keys(path.getBindingIdentifiers()).some(id =>
+      bodyPath.scope.hasOwnBinding(id),
+    )
+  ) {
+    block = t.blockStatement([declar, body]);
+  } else {
+    block = t.toBlock(body);
+    block.body.unshift(declar);
+  }
+  return block;
+}
+
+export default declare((api, options: Options) => {
+  api.assertVersion(REQUIRED_VERSION(7));
 
   {
     const { assumeArray, allowArrayLike, loose } = options;
@@ -21,11 +50,13 @@ export default declare((api, options) => {
       );
     }
 
-    // TODO: Remove in Babel 8
-    if (allowArrayLike && /^7\.\d\./.test(api.version)) {
-      throw new Error(
-        `The allowArrayLike is only supported when using @babel/core@^7.10.0`,
-      );
+    if (!process.env.BABEL_8_BREAKING) {
+      // TODO: Remove in Babel 8
+      if (allowArrayLike && /^7\.\d\./.test(api.version)) {
+        throw new Error(
+          `The allowArrayLike is only supported when using @babel/core@^7.10.0`,
+        );
+      }
     }
   }
 
@@ -38,7 +69,7 @@ export default declare((api, options) => {
   const arrayLikeIsIterable =
     options.allowArrayLike ?? api.assumption("arrayLikeIsIterable");
 
-  const skipteratorClosing =
+  const skipIteratorClosing =
     api.assumption("skipForOfIteratorClosing") ?? options.loose;
 
   if (iterableIsArray && arrayLikeIsIterable) {
@@ -54,18 +85,30 @@ export default declare((api, options) => {
       visitor: {
         ForOfStatement(path) {
           const { scope } = path;
-          const { left, right, await: isAwait } = path.node;
+          const { left, await: isAwait } = path.node;
           if (isAwait) {
             return;
           }
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+          const right = skipTransparentExprWrapperNodes(
+            path.node.right,
+          ) as t.Expression;
           const i = scope.generateUidIdentifier("i");
-          let array = scope.maybeGenerateMemoised(right, true);
+          let array: t.Identifier | t.ThisExpression =
+            scope.maybeGenerateMemoised(right, true);
+          if (
+            !array &&
+            t.isIdentifier(right) &&
+            path.get("body").scope.hasOwnBinding(right.name)
+          ) {
+            array = scope.generateUidIdentifier("arr");
+          }
 
           const inits = [t.variableDeclarator(i, t.numericLiteral(0))];
           if (array) {
             inits.push(t.variableDeclarator(array, right));
           } else {
-            array = right;
+            array = right as t.Identifier | t.ThisExpression;
           }
 
           const item = t.memberExpression(
@@ -83,20 +126,6 @@ export default declare((api, options) => {
             );
           }
 
-          let blockBody;
-          const body = path.get("body");
-          if (
-            body.isBlockStatement() &&
-            Object.keys(path.getBindingIdentifiers()).some(id =>
-              body.scope.hasOwnBinding(id),
-            )
-          ) {
-            blockBody = t.blockStatement([assignment, body.node]);
-          } else {
-            blockBody = t.toBlock(body.node);
-            blockBody.body.unshift(assignment);
-          }
-
           path.replaceWith(
             t.forStatement(
               t.variableDeclaration("let", inits),
@@ -106,7 +135,7 @@ export default declare((api, options) => {
                 t.memberExpression(t.cloneNode(array), t.identifier("length")),
               ),
               t.updateExpression("++", t.cloneNode(i)),
-              blockBody,
+              buildLoopBody(path, assignment),
             ),
           );
         },
@@ -134,19 +163,21 @@ export default declare((api, options) => {
     }
   `;
 
-  const builder = skipteratorClosing
+  const builder = skipIteratorClosing
     ? {
         build: buildForOfNoIteratorClosing,
         helper: "createForOfIteratorHelperLoose",
-        getContainer: nodes => nodes,
+        getContainer: (nodes: t.Statement[]): [t.ForStatement] =>
+          nodes as [t.ForStatement],
       }
     : {
         build: buildForOf,
         helper: "createForOfIteratorHelper",
-        getContainer: nodes => nodes[1].block.body,
+        getContainer: (nodes: t.Statement[]): [t.ForStatement] =>
+          (nodes[1] as t.TryStatement).block.body as [t.ForStatement],
       };
 
-  function _ForOfStatementArray(path) {
+  function _ForOfStatementArray(path: NodePath<t.ForOfStatement>) {
     const { node, scope } = path;
 
     const right = scope.generateUidIdentifierBasedOnNode(node.right, "arr");
@@ -160,7 +191,6 @@ export default declare((api, options) => {
     }) as t.For;
 
     t.inherits(loop, node);
-    t.ensureBlock(loop);
 
     const iterationValue = t.memberExpression(
       t.cloneNode(right),
@@ -168,19 +198,18 @@ export default declare((api, options) => {
       true,
     );
 
+    let declar;
     const left = node.left;
     if (t.isVariableDeclaration(left)) {
       left.declarations[0].init = iterationValue;
-      // @ts-expect-error todo(flow->ts):
-      loop.body.body.unshift(left);
+      declar = left;
     } else {
-      // @ts-expect-error todo(flow->ts):
-      loop.body.body.unshift(
-        t.expressionStatement(
-          t.assignmentExpression("=", left, iterationValue),
-        ),
+      declar = t.expressionStatement(
+        t.assignmentExpression("=", left, iterationValue),
       );
     }
+
+    loop.body = buildLoopBody(path, declar, loop.body);
 
     return loop;
   }
@@ -192,17 +221,21 @@ export default declare((api, options) => {
         const right = path.get("right");
         if (
           right.isArrayExpression() ||
-          right.isGenericType("Array") ||
-          t.isArrayTypeAnnotation(right.getTypeAnnotation())
+          (process.env.BABEL_8_BREAKING
+            ? right.isGenericType("Array")
+            : right.isGenericType("Array") ||
+              t.isArrayTypeAnnotation(right.getTypeAnnotation()))
         ) {
           path.replaceWith(_ForOfStatementArray(path));
           return;
         }
 
-        if (!state.availableHelper(builder.helper)) {
-          // Babel <7.9.0 doesn't support this helper
-          transformWithoutHelper(skipteratorClosing, path, state);
-          return;
+        if (!process.env.BABEL_8_BREAKING) {
+          if (!state.availableHelper(builder.helper)) {
+            // Babel <7.9.0 doesn't support this helper
+            transformWithoutHelper(skipIteratorClosing, path, state);
+            return;
+          }
         }
 
         const { node, parent, scope } = path;
@@ -227,11 +260,6 @@ export default declare((api, options) => {
           );
         }
 
-        // ensure that it's a block so we can take all its statements
-        path.ensureBlock();
-
-        node.body.body.unshift(declar);
-
         const nodes = builder.build({
           CREATE_ITERATOR_HELPER: state.addHelper(builder.helper),
           ITERATOR_HELPER: scope.generateUidIdentifier("iterator"),
@@ -240,7 +268,7 @@ export default declare((api, options) => {
             : null,
           STEP_KEY: t.identifier(stepKey),
           OBJECT: node.right,
-          BODY: node.body,
+          BODY: buildLoopBody(path, declar),
         });
         const container = builder.getContainer(nodes);
 
@@ -248,11 +276,12 @@ export default declare((api, options) => {
         t.inherits(container[0].body, node.body);
 
         if (t.isLabeledStatement(parent)) {
+          // @ts-expect-error replacing node types
           container[0] = t.labeledStatement(parent.label, container[0]);
 
           path.parentPath.replaceWithMultiple(nodes);
 
-          // The parent has been replaced, prevent Babel from traversing a detatched path
+          // The parent has been replaced, prevent Babel from traversing a detached path
           path.skip();
         } else {
           path.replaceWithMultiple(nodes);

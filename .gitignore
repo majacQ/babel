@@ -26,9 +26,9 @@ package-lock.json
 /packages/babel-compat-data/build
 
 /packages/babel-core/src/vendor/*.js
-/packages/babel-core/src/vendor/*.ts
 
 /packages/babel-runtime/helpers/*.js
+!/packages/babel-runtime/helpers/dispose.js
 !/packages/babel-runtime/helpers/toArray.js
 !/packages/babel-runtime/helpers/iterableToArray.js
 !/packages/babel-runtime/helpers/possibleConstructorReturn.js
@@ -55,9 +55,6 @@ package-lock.json
 !/packages/babel-runtime-corejs2/core-js/map.js
 
 /packages/babel-runtime-corejs3/helpers/*.js
-!/packages/babel-runtime-corejs3/helpers/possibleConstructorReturn.js
-/packages/babel-runtime-corejs3/helpers/esm/*.js
-!/packages/babel-runtime-corejs3/helpers/esm/possibleConstructorReturn.js
 /packages/babel-runtime-corejs3/core-js/**/*.js
 /packages/babel-runtime-corejs3/core-js-stable/**/*.js
 
@@ -71,6 +68,7 @@ package-lock.json
 packages/babel-standalone/babel.js
 packages/babel-standalone/babel.js.map
 packages/babel-standalone/babel.min.js
+packages/babel-standalone/babel.min.js.map
 /codemods/*/lib
 /packages/babel-parser/build
 .idea/
@@ -78,8 +76,10 @@ packages/babel-standalone/babel.min.js
 
 /eslint/*/lib
 /eslint/*/LICENSE
-!/packages/babel-eslint-plugin/LICENSE
-/.vscode
+!/eslint/babel-eslint-plugin/LICENSE
+
+/.vscode/**
+!/.vscode/settings.example.json
 # local directory for VSCode Extension - https://marketplace.visualstudio.com/items?itemName=xyz.local-history
 /.history
 
@@ -87,3 +87,7 @@ packages/babel-standalone/babel.min.js
 
 /test/runtime-integration/*/output.js
 /test/runtime-integration/*/absolute-output.js
+
+.module-type
+
+*.tsbuildinfo

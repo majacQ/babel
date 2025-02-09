@@ -1,6 +1,6 @@
 {
   "name": "@babel/helper-remap-async-to-generator",
-  "version": "7.16.8",
+  "version": "7.25.9",
   "description": "Helper function to remap async functions to generators",
   "repository": {
     "type": "git",
@@ -16,10 +16,13 @@
   "dependencies": {
     "@babel/helper-annotate-as-pure": "workspace:^",
     "@babel/helper-wrap-function": "workspace:^",
-    "@babel/types": "workspace:^"
+    "@babel/traverse": "workspace:^"
   },
   "devDependencies": {
-    "@babel/traverse": "workspace:^"
+    "@babel/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "@babel/core": "^7.0.0"
   },
   "engines": {
     "node": ">=6.9.0"
@@ -27,14 +30,28 @@
   "author": "The Babel Team (https://babel.dev/team)",
   "conditions": {
     "BABEL_8_BREAKING": [
-      null,
+      {
+        "engines": {
+          "node": "^18.20.0 || ^20.17.0 || >=22.8.0"
+        }
+      },
       {
         "exports": null
+      }
+    ],
+    "USE_ESM": [
+      null,
+      {
+        "type": "commonjs"
       }
     ]
   },
   "exports": {
-    ".": "./lib/index.js",
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./package.json": "./package.json"
-  }
+  },
+  "type": "module"
 }

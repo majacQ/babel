@@ -3,12 +3,12 @@ import helper from "@babel/helper-builder-react-jsx";
 import { types as t } from "@babel/core";
 
 export default declare(api => {
-  api.assertVersion(7);
+  api.assertVersion(REQUIRED_VERSION(7));
 
   return {
     name: "transform-react-jsx-compat",
 
-    manipulateOptions(opts, parserOpts) {
+    manipulateOptions(_, parserOpts) {
       parserOpts.plugins.push("jsx");
     },
 

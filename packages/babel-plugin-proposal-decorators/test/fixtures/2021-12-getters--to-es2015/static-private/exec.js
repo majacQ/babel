@@ -1,8 +1,9 @@
 function dec(get, context) {
-  context.addInitializer((instance) => {
-    instance[context.name + 'Context'] = context;
+  context.addInitializer(function() {
+    this[context.name + 'Context'] = context;
   });
 
+  expect(get.name).toEqual("get " + context.name);
   return function () {
     return get.call(this) + 1;
   }
